@@ -2,6 +2,7 @@ import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getKnowledgeGapTestRun, recordKnowledgeGap, type KnowledgeGapCategory } from '../../db/knowledge-gaps.js';
 import { registerDeliveryAction } from '../../delivery.js';
 import { log } from '../../log.js';
+import { closeSlackOutOfScopeThread } from '../../db/slack-out-of-scope-threads.js';
 
 const categories = new Set<KnowledgeGapCategory>(['missing_route', 'missing_capability', 'unsupported_action']);
 
@@ -35,6 +36,16 @@ registerDeliveryAction('record_knowledge_gap', async (content, session) => {
     threadId,
     testRunId,
   });
+  if (channelType === 'slack' && platformId && threadId) {
+    closeSlackOutOfScopeThread({
+      agentGroupId: session.agent_group_id,
+      channelId: platformId,
+      threadId,
+      knowledgeGapFingerprint: result.record.fingerprint,
+      sourceEventKey: `${session.id}:${sourceMessageId}`,
+      testRunId,
+    });
+  }
   log.info('Knowledge gap captured', {
     fingerprint: result.record.fingerprint,
     category,

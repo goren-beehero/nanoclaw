@@ -32,7 +32,9 @@ import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
+import { reopenSlackOutOfScopeThread } from './db/slack-out-of-scope-threads.js';
 import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
+import { resolveSlackOutOfScopeThread } from './modules/slack-out-of-scope-threads.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
@@ -299,6 +301,15 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     const agentGroup = getAgentGroup(agent.agent_group_id);
     if (!agentGroup) continue;
 
+    const outOfScope = resolveSlackOutOfScopeThread({
+      event,
+      agentGroupId: agent.agent_group_id,
+    });
+    if (outOfScope.suppress) {
+      policyConsumedCount++;
+      continue;
+    }
+
     const suppression = await resolveSlackThreadSuppression({
       event,
       agentGroupId: agent.agent_group_id,
@@ -318,6 +329,15 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
 
     if (engages && accessOk && scopeOk) {
+      if (outOfScope.reopenRequested && event.threadId !== null) {
+        const reopened = reopenSlackOutOfScopeThread(agent.agent_group_id, event.platformId, event.threadId);
+        log.info('Slack out-of-scope thread reopened by authorized explicit mention', {
+          agentGroupId: agent.agent_group_id,
+          channelId: event.platformId,
+          threadId: event.threadId,
+          reopened,
+        });
+      }
       await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, true);
       engagedCount++;
 

@@ -10,7 +10,9 @@ import {
   initTestDb,
   runMigrations,
 } from '../../db/index.js';
+import { cleanupKnowledgeGapTestRun } from '../../db/knowledge-gaps.js';
 import { getDeliveryAction } from '../../delivery.js';
+import { getSlackOutOfScopeThread } from '../../db/slack-out-of-scope-threads.js';
 import type { Session } from '../../types.js';
 import './index.js';
 
@@ -83,6 +85,7 @@ describe('record_knowledge_gap delivery action', () => {
     inDb.close();
 
     const gap = getDb().prepare('SELECT * FROM knowledge_gaps').get() as {
+      fingerprint: string;
       occurrence_count: number;
       test_run_id: string | null;
     };
@@ -98,6 +101,18 @@ describe('record_knowledge_gap delivery action', () => {
       thread_id: session.thread_id,
       test_run_id: 'test-run-1',
     });
+    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', session.thread_id!)).toMatchObject({
+      knowledgeGapFingerprint: gap.fingerprint,
+      sourceEventKey: 'sess-test:slack-message-1',
+      testRunId: 'test-run-1',
+      suppressedCount: 0,
+    });
+    expect(cleanupKnowledgeGapTestRun('test-run-1')).toEqual({
+      occurrencesDeleted: 1,
+      gapsDeleted: 1,
+      threadClosuresDeleted: 1,
+    });
+    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', session.thread_id!)).toBeUndefined();
   });
 
   it('rejects malformed events without affecting user-facing routing state', async () => {
@@ -116,6 +131,7 @@ describe('record_knowledge_gap delivery action', () => {
     ).rejects.toThrow(/required/);
     inDb.close();
     expect((getDb().prepare('SELECT COUNT(*) AS n FROM knowledge_gaps').get() as { n: number }).n).toBe(0);
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM slack_out_of_scope_threads').get() as { n: number }).n).toBe(0);
     expect(session.messaging_group_id).toBe('mg-test');
     expect(session.thread_id).toBe('slack:C-TEST:123.456');
   });

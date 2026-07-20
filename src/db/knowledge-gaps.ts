@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 
 import { getDb } from './connection.js';
+import { cleanupSlackOutOfScopeTestRun } from './slack-out-of-scope-threads.js';
 
 export type KnowledgeGapCategory = 'missing_route' | 'missing_capability' | 'unsupported_action';
 export type KnowledgeGapStatus = 'open' | 'triaged' | 'covered' | 'wont_cover';
@@ -180,7 +181,11 @@ export function getKnowledgeGapTestRun(
   return row?.test_run_id ?? null;
 }
 
-export function cleanupKnowledgeGapTestRun(testRunId: string): { occurrencesDeleted: number; gapsDeleted: number } {
+export function cleanupKnowledgeGapTestRun(testRunId: string): {
+  occurrencesDeleted: number;
+  gapsDeleted: number;
+  threadClosuresDeleted: number;
+} {
   return getDb().transaction(() => {
     const fingerprints = (
       getDb()
@@ -196,7 +201,8 @@ export function cleanupKnowledgeGapTestRun(testRunId: string): { occurrencesDele
       (fingerprint) =>
         getDb().prepare('SELECT 1 FROM knowledge_gaps WHERE fingerprint = ?').get(fingerprint) !== undefined,
     ).length;
+    const threadClosuresDeleted = cleanupSlackOutOfScopeTestRun(testRunId);
     getDb().prepare('DELETE FROM knowledge_gap_test_scopes WHERE test_run_id = ?').run(testRunId);
-    return { occurrencesDeleted, gapsDeleted: before - remaining };
+    return { occurrencesDeleted, gapsDeleted: before - remaining, threadClosuresDeleted };
   })();
 }

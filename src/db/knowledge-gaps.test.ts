@@ -120,7 +120,7 @@ describe('knowledge gap storage', () => {
     const restored = getDb()
       .prepare('SELECT occurrence_count, examples, test_run_id FROM knowledge_gaps WHERE fingerprint = ?')
       .get(production.record.fingerprint) as { occurrence_count: number; examples: string; test_run_id: string | null };
-    expect(cleaned).toEqual({ occurrencesDeleted: 2, gapsDeleted: 1 });
+    expect(cleaned).toEqual({ occurrencesDeleted: 2, gapsDeleted: 1, threadClosuresDeleted: 0 });
     expect(restored.occurrence_count).toBe(1);
     expect(restored.examples).toContain('production example');
     expect(restored.examples).not.toContain('test example');
