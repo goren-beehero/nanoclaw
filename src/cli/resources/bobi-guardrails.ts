@@ -15,8 +15,10 @@ registerResource({
     {
       name: 'suppressed_root_user_ids',
       type: 'json',
-      description: 'JSON array of immutable Slack user IDs whose root threads are suppressed.',
+      description: 'JSON array of immutable Slack user IDs with automatic participation disabled.',
     },
+    { name: 'wide_mentions_only', type: 'boolean', description: 'Apply only to Slack-wide announcements.' },
+    { name: 'allow_self_service', type: 'boolean', description: 'Allow users to change their own preference.' },
     { name: 'suppressed_count', type: 'number', description: 'Suppressed blacklisted-root decisions.' },
     { name: 'explicit_mention_count', type: 'number', description: 'Explicit mention overrides.' },
     {
@@ -44,9 +46,21 @@ registerResource({
           required: true,
         },
         { name: 'enabled', type: 'boolean', description: 'Enable immediately.', default: false },
+        {
+          name: 'wide_mentions_only',
+          type: 'boolean',
+          description: 'Suppress only roots containing Slack channel-wide mentions.',
+          default: false,
+        },
+        {
+          name: 'allow_self_service',
+          type: 'boolean',
+          description: 'Allow direct-mention opt-in and opt-out commands from the requesting user.',
+          default: false,
+        },
       ],
       examples: [
-        'ncl slack-thread-policies set --agent-group-id ag-123 --channel-id C123 --suppressed-root-user-ids \'["U123"]\' --enabled false',
+        'ncl slack-thread-policies set --agent-group-id ag-123 --channel-id C123 --suppressed-root-user-ids \'["U123"]\' --wide-mentions-only true --allow-self-service true --enabled false',
       ],
       async handler(args) {
         const ids = args.suppressed_root_user_ids;
@@ -57,14 +71,26 @@ registerResource({
         getDb()
           .prepare(
             `INSERT INTO slack_thread_suppression_policies
-               (agent_group_id, channel_id, enabled, suppressed_root_user_ids, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+               (agent_group_id, channel_id, enabled, suppressed_root_user_ids,
+                wide_mentions_only, allow_self_service, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (agent_group_id, channel_id) DO UPDATE SET
                enabled = excluded.enabled,
                suppressed_root_user_ids = excluded.suppressed_root_user_ids,
+               wide_mentions_only = excluded.wide_mentions_only,
+               allow_self_service = excluded.allow_self_service,
                updated_at = excluded.updated_at`,
           )
-          .run(args.agent_group_id, args.channel_id, args.enabled ? 1 : 0, JSON.stringify([...new Set(ids)]), now, now);
+          .run(
+            args.agent_group_id,
+            args.channel_id,
+            args.enabled ? 1 : 0,
+            JSON.stringify([...new Set(ids)]),
+            args.wide_mentions_only ? 1 : 0,
+            args.allow_self_service ? 1 : 0,
+            now,
+            now,
+          );
         return getDb()
           .prepare(
             `SELECT * FROM slack_thread_suppression_policies

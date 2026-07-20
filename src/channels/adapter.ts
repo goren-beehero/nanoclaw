@@ -110,6 +110,12 @@ export interface ConversationInfo {
   isGroup: boolean;
 }
 
+/** Minimal immutable metadata used by host-side Slack thread policy. */
+export interface ThreadRootMetadata {
+  userId: string;
+  text: string;
+}
+
 /** The v2 channel adapter contract. */
 export interface ChannelAdapter {
   name: string;
@@ -151,6 +157,9 @@ export interface ChannelAdapter {
 
   /** Resolve the immutable platform user ID of a thread's root author. */
   resolveThreadRootUserId?(platformId: string, threadId: string): Promise<string | null>;
+
+  /** Resolve the root author and raw platform text in one request. */
+  resolveThreadRootMetadata?(platformId: string, threadId: string): Promise<ThreadRootMetadata | null>;
 
   /**
    * Subscribe the bot to a thread so follow-up messages route via the

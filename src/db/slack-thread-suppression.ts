@@ -5,18 +5,23 @@ export type SlackSuppressionDecision =
   | 'suppress_blacklisted_root'
   | 'suppress_unresolved_root'
   | 'allow_explicit_mention'
-  | 'allow_previously_opened_thread';
+  | 'allow_previously_opened_thread'
+  | 'self_service_opt_out'
+  | 'self_service_opt_in';
 
 export interface SlackThreadSuppressionPolicy {
   agentGroupId: string;
   channelId: string;
   enabled: boolean;
   suppressedRootUserIds: string[];
+  wideMentionsOnly: boolean;
+  allowSelfService: boolean;
 }
 
 export interface SlackThreadSuppressionState {
   rootUserId: string;
   explicitlyOpened: boolean;
+  rootHasWideMention: boolean;
 }
 
 function parseUserIds(value: string): string[] {
@@ -35,12 +40,20 @@ export function getSlackThreadSuppressionPolicy(
 ): SlackThreadSuppressionPolicy | undefined {
   const row = getDb()
     .prepare(
-      `SELECT agent_group_id, channel_id, enabled, suppressed_root_user_ids
+      `SELECT agent_group_id, channel_id, enabled, suppressed_root_user_ids,
+              wide_mentions_only, allow_self_service
        FROM slack_thread_suppression_policies
        WHERE agent_group_id = ? AND channel_id = ?`,
     )
     .get(agentGroupId, channelId) as
-    | { agent_group_id: string; channel_id: string; enabled: number; suppressed_root_user_ids: string }
+    | {
+        agent_group_id: string;
+        channel_id: string;
+        enabled: number;
+        suppressed_root_user_ids: string;
+        wide_mentions_only: number;
+        allow_self_service: number;
+      }
     | undefined;
   if (!row) return undefined;
   return {
@@ -48,6 +61,8 @@ export function getSlackThreadSuppressionPolicy(
     channelId: row.channel_id,
     enabled: row.enabled === 1,
     suppressedRootUserIds: parseUserIds(row.suppressed_root_user_ids),
+    wideMentionsOnly: row.wide_mentions_only === 1,
+    allowSelfService: row.allow_self_service === 1,
   };
 }
 
@@ -58,12 +73,20 @@ export function getSlackThreadSuppressionState(
 ): SlackThreadSuppressionState | undefined {
   const row = getDb()
     .prepare(
-      `SELECT root_user_id, explicitly_opened
+      `SELECT root_user_id, explicitly_opened, root_has_wide_mention
        FROM slack_thread_suppression_state
        WHERE agent_group_id = ? AND channel_id = ? AND thread_id = ?`,
     )
-    .get(agentGroupId, channelId, threadId) as { root_user_id: string; explicitly_opened: number } | undefined;
-  return row ? { rootUserId: row.root_user_id, explicitlyOpened: row.explicitly_opened === 1 } : undefined;
+    .get(agentGroupId, channelId, threadId) as
+    | { root_user_id: string; explicitly_opened: number; root_has_wide_mention: number }
+    | undefined;
+  return row
+    ? {
+        rootUserId: row.root_user_id,
+        explicitlyOpened: row.explicitly_opened === 1,
+        rootHasWideMention: row.root_has_wide_mention === 1,
+      }
+    : undefined;
 }
 
 export function saveSlackThreadSuppressionState(input: {
@@ -72,19 +95,56 @@ export function saveSlackThreadSuppressionState(input: {
   threadId: string;
   rootUserId: string;
   explicitlyOpened: boolean;
+  rootHasWideMention: boolean;
 }): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
       `INSERT INTO slack_thread_suppression_state
-         (agent_group_id, channel_id, thread_id, root_user_id, explicitly_opened, created_at, updated_at)
-       VALUES (@agentGroupId, @channelId, @threadId, @rootUserId, @explicitlyOpened, @now, @now)
+         (agent_group_id, channel_id, thread_id, root_user_id, explicitly_opened,
+          root_has_wide_mention, created_at, updated_at)
+       VALUES (@agentGroupId, @channelId, @threadId, @rootUserId, @explicitlyOpened,
+               @rootHasWideMention, @now, @now)
        ON CONFLICT (agent_group_id, channel_id, thread_id) DO UPDATE SET
          root_user_id = excluded.root_user_id,
          explicitly_opened = MAX(slack_thread_suppression_state.explicitly_opened, excluded.explicitly_opened),
+         root_has_wide_mention = MAX(
+           slack_thread_suppression_state.root_has_wide_mention,
+           excluded.root_has_wide_mention
+         ),
          updated_at = excluded.updated_at`,
     )
-    .run({ ...input, explicitlyOpened: input.explicitlyOpened ? 1 : 0, now });
+    .run({
+      ...input,
+      explicitlyOpened: input.explicitlyOpened ? 1 : 0,
+      rootHasWideMention: input.rootHasWideMention ? 1 : 0,
+      now,
+    });
+}
+
+export function setSlackAutomaticParticipation(input: {
+  agentGroupId: string;
+  channelId: string;
+  userId: string;
+  optedOut: boolean;
+}): SlackThreadSuppressionPolicy | undefined {
+  return getDb().transaction(() => {
+    const policy = getSlackThreadSuppressionPolicy(input.agentGroupId, input.channelId);
+    if (!policy?.enabled || !policy.allowSelfService) return undefined;
+
+    const ids = new Set(policy.suppressedRootUserIds);
+    if (input.optedOut) ids.add(input.userId);
+    else ids.delete(input.userId);
+    const now = new Date().toISOString();
+    getDb()
+      .prepare(
+        `UPDATE slack_thread_suppression_policies
+         SET suppressed_root_user_ids = ?, updated_at = ?
+         WHERE agent_group_id = ? AND channel_id = ?`,
+      )
+      .run(JSON.stringify([...ids].sort()), now, input.agentGroupId, input.channelId);
+    return getSlackThreadSuppressionPolicy(input.agentGroupId, input.channelId);
+  })();
 }
 
 /**
