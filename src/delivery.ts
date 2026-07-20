@@ -34,6 +34,14 @@ const MAX_DELIVERY_ATTEMPTS = 3;
 /** Track delivery attempt counts. Resets on process restart (gives failed messages a fresh chance). */
 const deliveryAttempts = new Map<string, number>();
 
+function requiresOriginChannel(agentGroupId: string): boolean {
+  return (process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .includes(agentGroupId);
+}
+
 /**
  * Sessions whose outbound queue is currently being drained.
  *
@@ -305,6 +313,12 @@ async function deliverMessage(
       throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
     }
     const isOriginChat = session.messaging_group_id === mg.id;
+    if (!isOriginChat && requiresOriginChannel(session.agent_group_id)) {
+      throw new Error(
+        `cross-channel delivery blocked for ${session.agent_group_id}: session ${session.id} originated in ` +
+          `${session.messaging_group_id ?? 'no channel'} but targeted ${mg.id}`,
+      );
+    }
     // Guarded: without the agent-to-agent module, `agent_destinations`
     // doesn't exist and we permit all non-origin channel sends (the
     // origin-chat case is always allowed regardless). Inlined SQL instead

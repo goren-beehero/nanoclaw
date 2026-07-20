@@ -1,4 +1,6 @@
 import { registerResource } from '../crud.js';
+import { ensureMessagingGroupAgentDestination } from '../../db/messaging-groups.js';
+import type { MessagingGroupAgent } from '../../types.js';
 
 registerResource({
   name: 'wiring',
@@ -67,4 +69,7 @@ registerResource({
     { name: 'created_at', type: 'string', description: 'Auto-set.', generated: true },
   ],
   operations: { list: 'open', get: 'open', create: 'approval', update: 'approval', delete: 'approval' },
+  // Generic CRUD used to insert directly into messaging_group_agents and
+  // bypass the destination side effect in createMessagingGroupAgent().
+  afterCreate: (row) => ensureMessagingGroupAgentDestination(row as unknown as MessagingGroupAgent),
 });

@@ -14,6 +14,8 @@ Use the `mcp__nanoclaw__send_message` tool to send a message while you're still 
 
 **Outcomes, not play-by-play.** When the turn is done, the final message should be about the result, not a transcript of what you did.
 
+**Never send the same answer twice.** A successful `send_message` call has already delivered that text. Do not repeat or paraphrase it in the final response. If `send_message` delivered the complete answer and nothing else remains, return only `<internal>Answer already delivered.</internal>` so no second user-facing message is created.
+
 ### Sending files (`send_file`)
 
 Use `mcp__nanoclaw__send_file({ path, text?, filename?, to? })` to deliver a file from your workspace. `path` is absolute or relative to `/workspace/agent/`; `filename` overrides the display name shown in chat (defaults to the file's basename); `text` is an optional accompanying message. Use this for artifacts you produce (charts, PDFs, generated images, reports) rather than dumping contents into chat.

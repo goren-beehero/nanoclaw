@@ -183,6 +183,11 @@ export function createMessagingGroupAgent(mga: MessagingGroupAgent): void {
     )
     .run(mga);
 
+  ensureMessagingGroupAgentDestination(mga);
+}
+
+/** Ensure a wiring has the matching outbound destination ACL. */
+export function ensureMessagingGroupAgentDestination(mga: MessagingGroupAgent): void {
   // Auto-create an agent_destinations row so delivery's ACL doesn't block
   // outbound messages that target this chat. Guarded: when the agent-to-agent
   // module isn't installed the table doesn't exist — skip silently. Without

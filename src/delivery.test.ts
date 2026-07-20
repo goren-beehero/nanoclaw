@@ -78,6 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS;
   closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
@@ -291,6 +292,72 @@ describe('deliverSessionMessages — instance resolution', () => {
 });
 
 describe('deliverSessionMessages — permission check', () => {
+  it('blocks an authorized cross-channel send for channel-local agents', async () => {
+    seedAgentAndChannel();
+    createMessagingGroupAgent({
+      id: 'mga-origin',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'per-thread',
+      priority: 0,
+      created_at: now(),
+    });
+    createMessagingGroup({
+      id: 'mg-2',
+      channel_type: 'slack',
+      platform_id: 'slack:C2',
+      name: 'Other Channel',
+      is_group: 1,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-other',
+      messaging_group_id: 'mg-2',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'per-thread',
+      priority: 0,
+      created_at: now(),
+    });
+
+    const { session } = resolveSession('ag-1', 'mg-1', 'slack:C1:thread', 'per-thread');
+    const outDb = new Database(outboundDbPath('ag-1', session.id));
+    outDb
+      .prepare(
+        `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
+         VALUES (?, datetime('now'), 'chat', 'slack:C2', 'slack', ?)`,
+      )
+      .run('out-cross-channel', JSON.stringify({ text: 'must stay private' }));
+    outDb.close();
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    const calls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_ct, _pid, _tid, _kind, content) {
+        calls.push(content);
+        return 'plat-msg';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+
+    expect(calls).toHaveLength(0);
+    const inDb = openInboundDb('ag-1', session.id);
+    const delivered = getDeliveredIds(inDb);
+    inDb.close();
+    expect(delivered.has('out-cross-channel')).toBe(true);
+  });
+
   it('rejects delivery to an unauthorized channel destination', async () => {
     seedAgentAndChannel();
 

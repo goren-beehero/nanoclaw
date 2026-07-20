@@ -65,11 +65,14 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
     : {};
   const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
 
-  // Skill fragments — every skill that ships an `instructions.md`.
-  // TODO (shared-source refactor): respect `container.json` skill selection.
+  // Skill fragments — only skills enabled by the group's container config.
+  // "all" retains the discovery behavior used for groups that opt into every
+  // installed skill.
   const skillsHostDir = path.join(process.cwd(), 'container', 'skills');
   if (fs.existsSync(skillsHostDir)) {
-    for (const skillName of fs.readdirSync(skillsHostDir)) {
+    const configuredSkills = configRow ? (JSON.parse(configRow.skills) as string[] | 'all') : 'all';
+    const selectedSkills = configuredSkills === 'all' ? fs.readdirSync(skillsHostDir) : configuredSkills;
+    for (const skillName of selectedSkills) {
       const hostFragment = path.join(skillsHostDir, skillName, 'instructions.md');
       if (fs.existsSync(hostFragment)) {
         desired.set(`skill-${skillName}.md`, {

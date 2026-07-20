@@ -81,6 +81,11 @@ export interface ResourceDef {
     update?: Access;
     delete?: Access;
   };
+  /**
+   * Synchronous lifecycle hook run in the same transaction as a generic
+   * create. Receives the persisted row, including database defaults.
+   */
+  afterCreate?: (row: Record<string, unknown>) => void;
   /** Non-standard verbs (grant, revoke, add, remove, restart, etc.). */
   customOperations?: Record<string, CustomOperation>;
 }
@@ -174,9 +179,18 @@ function genericCreate(def: ResourceDef) {
 
     const colNames = Object.keys(values);
     const placeholders = colNames.map((c) => `@${c}`);
-    getDb()
-      .prepare(`INSERT INTO ${def.table} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`)
-      .run(values);
+    const db = getDb();
+    db.transaction(() => {
+      db.prepare(`INSERT INTO ${def.table} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`).run(values);
+
+      if (def.afterCreate) {
+        const row = db.prepare(`SELECT * FROM ${def.table} WHERE ${def.idColumn} = ?`).get(values[def.idColumn]) as
+          | Record<string, unknown>
+          | undefined;
+        if (!row) throw new Error(`${def.name} was inserted but could not be reloaded`);
+        def.afterCreate(row);
+      }
+    })();
     return values;
   };
 }

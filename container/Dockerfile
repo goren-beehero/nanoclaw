@@ -5,6 +5,7 @@
 # Runtime split:
 #   - agent-runner (our TypeScript code): Bun, mounted RO at /app/src by host
 #   - globally-installed Node CLIs (claude-code, agent-browser, vercel): pnpm + Node
+#   - BeeHero data tooling: Python 3.11 venv with AWS/Athena libraries
 #
 # Source is never baked in — /app/src is provided by a shared read-only
 # bind mount at runtime (see src/container-runner.ts). Source-only changes
@@ -22,6 +23,7 @@ ARG INSTALL_CJK_FONTS=false
 # pinned in cli-tools.json so a skill can add one with a json-merge; Bun (the
 # runtime) is pinned here because it installs from a different source.
 ARG BUN_VERSION=1.3.12
+ARG PYTHON_VERSION=3.11
 
 # ---- System dependencies -----------------------------------------------------
 # tini: correct PID 1 / signal forwarding so outbound.db writes finalize on
@@ -48,6 +50,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         curl \
         git \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-venv \
         tini \
         unzip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
@@ -61,6 +65,21 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Belt-and-braces: prevent Playwright's postinstall from downloading its own
 # ~300MB Chromium. We've already installed the system one above.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# ---- BeeHero Python/AWS tooling ---------------------------------------------
+# Match agents-team's Pipfile (`python_version = "3.11"`). Keep Python tooling in
+# a venv so Debian's externally-managed system Python stays untouched while the
+# agent can still call `python`, `python3`, `pip`, and `aws` directly from PATH.
+ENV BEEHERO_PYTHON_VENV=/opt/beehero-python
+ENV PATH="${BEEHERO_PYTHON_VENV}/bin:${PATH}"
+RUN python${PYTHON_VERSION} -m venv "${BEEHERO_PYTHON_VENV}" && \
+    "${BEEHERO_PYTHON_VENV}/bin/pip" install --no-cache-dir --upgrade pip setuptools wheel && \
+    "${BEEHERO_PYTHON_VENV}/bin/pip" install --no-cache-dir \
+        awscli \
+        boto3 \
+        awswrangler \
+        plotly \
+        astral==3.2
 
 # ---- Bun runtime -------------------------------------------------------------
 # Install via the official script (handles multi-arch detection), then move

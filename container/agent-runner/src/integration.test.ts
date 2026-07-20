@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './db/connection.js';
-import { getUndeliveredMessages } from './db/messages-out.js';
+import { getUndeliveredMessages, writeMessageOut } from './db/messages-out.js';
 import { getPendingMessages } from './db/messages-in.js';
 import { getContinuation, setContinuation } from './db/session-state.js';
 import { MockProvider } from './providers/mock.js';
@@ -182,6 +182,57 @@ describe('poll loop integration', () => {
     expect(JSON.parse(discord!.content).text).toBe('for discord');
     expect(slack).toBeDefined();
     expect(JSON.parse(slack!.content).text).toBe('for slack');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('suppresses a final message already sent by MCP in the same inbound turn', async () => {
+    insertMessage('m1', { sender: 'Alice', text: 'check this' }, { platformId: 'chan-1', channelType: 'discord' });
+    writeMessageOut({
+      id: 'mcp-response',
+      in_reply_to: 'm1',
+      kind: 'chat',
+      platform_id: 'chan-1',
+      channel_type: 'discord',
+      content: JSON.stringify({ text: 'Already delivered' }),
+    });
+
+    const provider = new MockProvider({}, () => '<message to="discord-test">Already delivered</message>');
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getPendingMessages().length === 0, 2000);
+    controller.abort();
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('mcp-response');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('keeps a distinct final message after an MCP progress update', async () => {
+    insertMessage('m1', { sender: 'Alice', text: 'check this' }, { platformId: 'chan-1', channelType: 'discord' });
+    writeMessageOut({
+      id: 'mcp-progress',
+      in_reply_to: 'm1',
+      kind: 'chat',
+      platform_id: 'chan-1',
+      channel_type: 'discord',
+      content: JSON.stringify({ text: 'Still checking' }),
+    });
+
+    const provider = new MockProvider({}, () => '<message to="discord-test">Final answer</message>');
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length === 2, 2000);
+    controller.abort();
+
+    expect(getUndeliveredMessages().map((message) => JSON.parse(message.content).text)).toEqual([
+      'Still checking',
+      'Final answer',
+    ]);
 
     await loopPromise.catch(() => {});
   });

@@ -15,7 +15,7 @@ vi.mock('./log.js', () => ({
 }));
 
 import { composeGroupClaudeMd } from './claude-md-compose.js';
-import { ensureContainerConfig } from './db/container-configs.js';
+import { ensureContainerConfig, updateContainerConfigJson } from './db/container-configs.js';
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
 import { PERSONA_PREPEND_FILE } from './group-persona.js';
 import type { AgentGroup } from './types.js';
@@ -89,5 +89,31 @@ describe('composeGroupClaudeMd persona prepend', () => {
     expect(imports[0]).toBe('@./.claude-shared.md');
     expect(imports).not.toContain('@./.claude-fragments/persona.md');
     expect(fs.existsSync(path.join(GROUPS_DIR, ag.folder, '.claude-fragments', 'persona.md'))).toBe(false);
+  });
+});
+
+describe('composeGroupClaudeMd skill selection', () => {
+  it('imports only explicitly selected skill fragments', () => {
+    const ag = group('ag-selected-skill', 'selected-skill-group');
+    seed(ag);
+    updateContainerConfigJson(ag.id, 'skills', ['onecli-gateway']);
+
+    composeGroupClaudeMd(ag);
+
+    const imports = importsOf(ag.folder);
+    expect(imports).toContain('@./.claude-fragments/skill-onecli-gateway.md');
+    expect(imports).not.toContain('@./.claude-fragments/skill-whatsapp-formatting.md');
+  });
+
+  it('imports every available skill fragment when configured as all', () => {
+    const ag = group('ag-all-skills', 'all-skills-group');
+    seed(ag);
+    updateContainerConfigJson(ag.id, 'skills', 'all');
+
+    composeGroupClaudeMd(ag);
+
+    const imports = importsOf(ag.folder);
+    expect(imports).toContain('@./.claude-fragments/skill-onecli-gateway.md');
+    expect(imports).toContain('@./.claude-fragments/skill-whatsapp-formatting.md');
   });
 });

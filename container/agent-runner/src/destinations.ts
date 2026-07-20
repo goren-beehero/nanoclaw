@@ -124,7 +124,7 @@ function buildDestinationsSection(): string {
   );
   lines.push('');
   lines.push(
-    'The `send_message` MCP tool is the same delivery, available mid-turn — handy for a quick acknowledgment ("on it") before a slow tool call. Each `send_message` call and each final-response `<message>` block lands as its own message in the conversation, so they read as a sequence rather than as one combined reply.',
+    'The `send_message` MCP tool is the same delivery, available mid-turn — handy for a quick acknowledgment ("on it") before a slow tool call. Each `send_message` call and each final-response `<message>` block lands as its own message in the conversation, so never repeat content already sent with `send_message` in the final response. If `send_message` already delivered the complete answer, finish with `<internal>Answer already delivered.</internal>` only.',
   );
   return lines.join('\n');
 }
