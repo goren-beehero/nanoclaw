@@ -39,16 +39,18 @@ export interface KnowledgeGapRecord {
 }
 
 export function normalizeCapabilityKey(value: string): string {
-  return value
+  const normalized = value
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, ' url ')
     .replace(/\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b/gi, ' device-id ')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, ' id ')
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' date ')
     .replace(/\b\d+\b/g, ' number ')
+    .replace(/[_-]+/g, ' ')
     .replace(/[^a-z0-9_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  return normalized.replace(/^(?:run|execute|trigger|start|launch|perform|invoke|initiate)\s+/, '');
 }
 
 export function knowledgeGapFingerprint(category: KnowledgeGapCategory, capabilityKey: string): string {

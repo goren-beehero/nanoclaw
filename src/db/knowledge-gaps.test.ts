@@ -32,6 +32,12 @@ describe('knowledge gap storage', () => {
     );
   });
 
+  it('normalizes equivalent leading action verbs and separators', () => {
+    const keys = ['trigger_airflow_backfill', 'execute Airflow backfill', 'run airflow-backfill'];
+    expect(keys.map(normalizeCapabilityKey)).toEqual(['airflow backfill', 'airflow backfill', 'airflow backfill']);
+    expect(new Set(keys.map((key) => knowledgeGapFingerprint('unsupported_action', key))).size).toBe(1);
+  });
+
   it('deduplicates paraphrases and duplicate source events', () => {
     const one = recordKnowledgeGap({
       ...base,
