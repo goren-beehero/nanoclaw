@@ -40,6 +40,7 @@ function normalizeSlackDirective(text: string): string {
   return text
     .toLowerCase()
     .replace(/[’]/g, "'")
+    .replace(/\s+sent using\s+@[a-z0-9_-]+\s*$/i, '')
     .replace(/<@[a-z0-9]+>/gi, ' ')
     .replace(/<!(channel|here|everyone)(?:\^[^>]*)?>/gi, ' $1 ')
     .replace(/[^a-z0-9' ]+/g, ' ')

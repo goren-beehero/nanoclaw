@@ -343,6 +343,7 @@ describe('Slack suppression router integration', () => {
 
   it.each([
     '<@U-BOBI> do not reply',
+    '<@U-BOBI> policy note; do not reply Sent using @ChatGPT',
     "<!channel> participation policy update <@U-BOBI> please don't respond",
     '<!here> FYI <@U-BOBI> no response needed',
     '<@U-BOBI> no need to reply',
