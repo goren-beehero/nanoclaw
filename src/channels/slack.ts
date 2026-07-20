@@ -34,6 +34,10 @@ registerChannelAdapter('slack', {
         return null;
       }
     };
+    bridge.resolveThreadRootUserId = async (_platformId: string, threadId: string) => {
+      const page = await slackAdapter.fetchMessages(threadId, { limit: 1, direction: 'forward' });
+      return page.messages[0]?.author.userId ?? null;
+    };
     return bridge;
   },
 });

@@ -149,6 +149,9 @@ export interface ChannelAdapter {
   syncConversations?(): Promise<ConversationInfo[]>;
   resolveChannelName?(platformId: string): Promise<string | null>;
 
+  /** Resolve the immutable platform user ID of a thread's root author. */
+  resolveThreadRootUserId?(platformId: string, threadId: string): Promise<string | null>;
+
   /**
    * Subscribe the bot to a thread so follow-up messages route via the
    * platform's "subscribed message" path (onSubscribedMessage in Chat SDK).

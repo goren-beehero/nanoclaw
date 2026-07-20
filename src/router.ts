@@ -32,6 +32,7 @@ import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
+import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
@@ -291,11 +292,25 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
 
   let engagedCount = 0;
   let accumulatedCount = 0;
+  let policyConsumedCount = 0;
   let subscribed = false;
 
   for (const agent of agents) {
     const agentGroup = getAgentGroup(agent.agent_group_id);
     if (!agentGroup) continue;
+
+    const suppression = await resolveSlackThreadSuppression({
+      event,
+      agentGroupId: agent.agent_group_id,
+      resolvedSenderId: userId,
+      adapter,
+    });
+    // A duplicate policy event is consumed here as well: it must not wake the
+    // model a second time, regardless of whether the first event was allowed.
+    if (suppression.suppress || suppression.duplicate) {
+      policyConsumedCount++;
+      continue;
+    }
 
     const engages = evaluateEngage(agent, messageText, isMention, mg, event.threadId);
 
@@ -347,7 +362,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     }
   }
 
-  if (engagedCount + accumulatedCount === 0) {
+  if (engagedCount + accumulatedCount === 0 && policyConsumedCount === 0) {
     recordDroppedMessage({
       channel_type: event.channelType,
       platform_id: event.platformId,
