@@ -93,6 +93,7 @@ describe('Slack automatic-participation commands', () => {
     ['<!channel> change notice <@U-BOBI> please do not respond', null],
     ['<!channel> my announcement about the change <@U-BOBI> do not reply', null],
     ['<@U-BOBI> do not reply Sent using @ChatGPT', null],
+    ['<!channel> note <@U-BOBI> do not reply **Sent using** @ChatGPT', null],
     ['<@U-BOBI> what is the AUS group status?', null],
   ] as const)('parses %j as %s', (text, expected) => {
     expect(parseAutomaticParticipationCommand(text)).toBe(expected);
@@ -105,6 +106,7 @@ describe('Slack automatic-participation commands', () => {
     ['<@U-BOBI> no need to reply', true],
     ['<@U-BOBI> dont reply', true],
     ['<@U-BOBI> do not reply Sent using @ChatGPT', true],
+    ['<!channel> note <@U-BOBI> please do not respond to this announcement **Sent using** @ChatGPT', true],
     ['<@U-BOBI> please remain silent', true],
     ["<@U-BOBI> don't automatically reply to my <!channel> announcements", false],
     ['<@U-BOBI> explain why the phrase do not reply appears here', false],

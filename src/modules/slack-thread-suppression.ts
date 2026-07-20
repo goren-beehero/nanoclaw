@@ -45,6 +45,7 @@ function normalizeSlackDirective(text: string): string {
     .replace(/<!(channel|here|everyone)(?:\^[^>]*)?>/gi, ' $1 ')
     .replace(/[^a-z0-9' ]+/g, ' ')
     .replace(/\s+/g, ' ')
+    .replace(/\bsent using chatgpt\s*$/i, '')
     .trim();
 }
 
