@@ -7,7 +7,8 @@ export type SlackSuppressionDecision =
   | 'allow_explicit_mention'
   | 'allow_previously_opened_thread'
   | 'self_service_opt_out'
-  | 'self_service_opt_in';
+  | 'self_service_opt_in'
+  | 'silence_requested';
 
 export interface SlackThreadSuppressionPolicy {
   agentGroupId: string;

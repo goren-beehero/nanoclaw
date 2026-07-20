@@ -340,4 +340,81 @@ describe('Slack suppression router integration', () => {
     );
     expect(findSessionForAgent('ag-bobi', 'mg-test', 'slack:C-TEST:750.1')).toBeDefined();
   });
+
+  it.each([
+    '<@U-BOBI> do not reply',
+    "<!channel> participation policy update <@U-BOBI> please don't respond",
+    '<!here> FYI <@U-BOBI> no response needed',
+    '<@U-BOBI> no need to reply',
+    '<@U-BOBI> please remain silent',
+  ])('silences only the current message without changing participation for %j', async (text) => {
+    getDb()
+      .prepare(
+        `UPDATE slack_thread_suppression_policies
+         SET suppressed_root_user_ids = '["U-EXISTING"]', wide_mentions_only = 1, allow_self_service = 1
+         WHERE agent_group_id = 'ag-bobi' AND channel_id = 'C-TEST'`,
+      )
+      .run();
+    const { routeInbound } = await import('./router.js');
+    const { wakeContainer } = await import('./container-runner.js');
+    const typing = await import('./modules/typing/index.js');
+    const id = `800.${text.length}`;
+    const threadId = `slack:C-TEST:${id}`;
+
+    const silence = event(id, threadId, true, 'C-TEST', text, 'U-GUY');
+    await routeInbound(silence);
+    await routeInbound(silence);
+
+    expect(deliver).not.toHaveBeenCalled();
+    expect(findSessionForAgent('ag-bobi', 'mg-test', threadId)).toBeUndefined();
+    expect(wakeContainer).not.toHaveBeenCalled();
+    expect(typing.startTypingRefresh).not.toHaveBeenCalled();
+    const policyRow = getDb()
+      .prepare(
+        `SELECT suppressed_root_user_ids FROM slack_thread_suppression_policies
+         WHERE agent_group_id = 'ag-bobi' AND channel_id = 'C-TEST'`,
+      )
+      .get() as { suppressed_root_user_ids: string };
+    expect(JSON.parse(policyRow.suppressed_root_user_ids)).toEqual(['U-EXISTING']);
+    expect(
+      (
+        getDb()
+          .prepare(
+            `SELECT COUNT(*) AS n FROM slack_thread_suppression_events
+             WHERE agent_group_id = 'ag-bobi' AND channel_id = 'C-TEST'
+               AND event_id = ? AND decision = 'silence_requested'`,
+          )
+          .get(id) as { n: number }
+      ).n,
+    ).toBe(1);
+  });
+
+  it('keeps ordinary direct mentions and quoted no-reply language working normally', async () => {
+    getDb()
+      .prepare(
+        `UPDATE slack_thread_suppression_policies
+         SET suppressed_root_user_ids = '[]', wide_mentions_only = 1, allow_self_service = 1
+         WHERE agent_group_id = 'ag-bobi' AND channel_id = 'C-TEST'`,
+      )
+      .run();
+    const { routeInbound } = await import('./router.js');
+
+    await routeInbound(
+      event(
+        '900.1',
+        'slack:C-TEST:900.1',
+        true,
+        'C-TEST',
+        '<@U-BOBI> explain why the phrase do not reply appears in the policy',
+        'U-GUY',
+      ),
+    );
+    await routeInbound(
+      event('910.1', 'slack:C-TEST:910.1', true, 'C-TEST', '<@U-BOBI> check the AUS group status', 'U-GUY'),
+    );
+
+    expect(findSessionForAgent('ag-bobi', 'mg-test', 'slack:C-TEST:900.1')).toBeDefined();
+    expect(findSessionForAgent('ag-bobi', 'mg-test', 'slack:C-TEST:910.1')).toBeDefined();
+    expect(deliver).not.toHaveBeenCalled();
+  });
 });

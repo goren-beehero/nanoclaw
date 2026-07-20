@@ -36,8 +36,8 @@ export function hasSlackWideMention(text: string): boolean {
   return /<!(?:channel|here|everyone)(?:\^[^>]*)?>/i.test(text);
 }
 
-export function parseAutomaticParticipationCommand(text: string): AutomaticParticipationCommand | null {
-  const normalized = text
+function normalizeSlackDirective(text: string): string {
+  return text
     .toLowerCase()
     .replace(/[’]/g, "'")
     .replace(/<@[a-z0-9]+>/gi, ' ')
@@ -45,15 +45,17 @@ export function parseAutomaticParticipationCommand(text: string): AutomaticParti
     .replace(/[^a-z0-9' ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function parseAutomaticParticipationCommand(text: string): AutomaticParticipationCommand | null {
+  const normalized = normalizeSlackDirective(text);
 
   if (/\bopt me out\b/.test(normalized)) return 'opt_out';
   if (
     /\bexclude me\b.*\b(?:automatic|wide|announcement|channel|here|everyone|participation|reply|replies|respond)\b/.test(
       normalized,
     ) ||
-    /\b(?:do not|don't|stop|disable|turn off)\b.*\b(?:automatic|automatically|join|reply|respond|participat)/.test(
-      normalized,
-    )
+    /\b(?:do not|don't|dont|stop|disable|turn off)\b.*\b(?:automatic|automatically|participation)\b/.test(normalized)
   ) {
     return 'opt_out';
   }
@@ -63,11 +65,29 @@ export function parseAutomaticParticipationCommand(text: string): AutomaticParti
     /\binclude me\b.*\b(?:automatic|wide|announcement|channel|here|everyone|participation|reply|replies|respond)\b/.test(
       normalized,
     ) ||
-    /\b(?:allow|resume|enable|turn on)\b.*\b(?:automatic|automatically|join|reply|respond|participat)/.test(normalized)
+    /\b(?:allow|resume|enable|turn on)\b.*\b(?:automatic|automatically|participation)\b/.test(normalized)
   ) {
     return 'opt_in';
   }
   return null;
+}
+
+/**
+ * A direct, message-local request for silence. Keep this deliberately narrow:
+ * it must end the message, so quoted or explanatory uses of "do not reply"
+ * still reach the agent. Persistent participation commands are classified
+ * first and therefore never land here.
+ */
+export function hasOneMessageSilenceDirective(text: string): boolean {
+  const normalized = normalizeSlackDirective(text);
+  return (
+    /\b(?:please )?(?:do not|don't|dont) (?:reply|respond)(?: to (?:me|this|this message|this thread|the thread|this announcement|the announcement))?(?: please)?$/.test(
+      normalized,
+    ) ||
+    /\b(?:no need to (?:reply|respond)|no (?:reply|response)(?: is)? needed|(?:please )?(?:stay|remain) silent)(?: please)?$/.test(
+      normalized,
+    )
+  );
 }
 
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
@@ -169,6 +189,22 @@ export async function resolveSlackThreadSuppression(input: {
       });
       return { duplicate: false, decision, suppress: true };
     }
+  }
+
+  if (policy.allowSelfService && event.message.isMention && hasOneMessageSilenceDirective(text)) {
+    const decision: SlackSuppressionDecision = 'silence_requested';
+    recordSlackSuppressionDecision({
+      agentGroupId,
+      channelId: event.platformId,
+      eventId: event.message.id,
+      decision,
+    });
+    log.info('Slack message suppressed by explicit one-message silence directive', {
+      agentGroupId,
+      channelId: event.platformId,
+      decision,
+    });
+    return { duplicate: false, decision, suppress: true };
   }
 
   const state = getSlackThreadSuppressionState(agentGroupId, event.platformId, event.threadId);

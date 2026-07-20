@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   evaluateSlackThreadSuppression,
+  hasOneMessageSilenceDirective,
   hasSlackWideMention,
   parseAutomaticParticipationCommand,
 } from './slack-thread-suppression.js';
@@ -88,9 +89,27 @@ describe('Slack automatic-participation commands', () => {
     ['<@U-BOBI> opt me back in', 'opt_in'],
     ['<@U-BOBI> include me in automatic announcement replies', 'opt_in'],
     ['<@U-BOBI> resume automatic participation', 'opt_in'],
+    ['<@U-BOBI> do not reply', null],
+    ['<!channel> change notice <@U-BOBI> please do not respond', null],
+    ['<!channel> my announcement about the change <@U-BOBI> do not reply', null],
     ['<@U-BOBI> what is the AUS group status?', null],
   ] as const)('parses %j as %s', (text, expected) => {
     expect(parseAutomaticParticipationCommand(text)).toBe(expected);
+  });
+
+  it.each([
+    ['<@U-BOBI> do not reply', true],
+    ["<!channel> rollout note <@U-BOBI> please don't respond", true],
+    ['<@U-BOBI> this is FYI only, no response needed', true],
+    ['<@U-BOBI> no need to reply', true],
+    ['<@U-BOBI> dont reply', true],
+    ['<@U-BOBI> please remain silent', true],
+    ["<@U-BOBI> don't automatically reply to my <!channel> announcements", false],
+    ['<@U-BOBI> explain why the phrase do not reply appears here', false],
+    ['<@U-BOBI> do not reply with a guess; inspect the data instead', false],
+    ['<@U-BOBI> what is the AUS group status?', false],
+  ] as const)('classifies one-message silence in %j as %s', (text, expected) => {
+    expect(hasOneMessageSilenceDirective(text)).toBe(expected);
   });
 
   it.each([
