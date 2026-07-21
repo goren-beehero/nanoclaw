@@ -18,6 +18,9 @@ const envConfig = readEnvFile([
   'NANOCLAW_EGRESS_LOCKDOWN',
   'NANOCLAW_EGRESS_NETWORK',
   'ONECLI_GATEWAY_CONTAINER',
+  'NANOCLAW_GOOGLE_DOCS_WRITE_USERS',
+  'NANOCLAW_GOOGLE_DOCS_WRITE_AGENT_GROUPS',
+  'NANOCLAW_GOOGLE_DOCS_WRITER_IDENTIFIER',
 ]);
 
 /**
@@ -86,6 +89,27 @@ export const EGRESS_NETWORK =
   process.env.NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || 'nanoclaw-egress';
 export const ONECLI_GATEWAY_CONTAINER =
   process.env.ONECLI_GATEWAY_CONTAINER || envConfig.ONECLI_GATEWAY_CONTAINER || 'onecli';
+
+function csvSet(value: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+}
+
+/** Host-enforced Google Docs mutation policy. Empty allowlists disable writes. */
+export const GOOGLE_DOCS_WRITE_USERS = csvSet(
+  process.env.NANOCLAW_GOOGLE_DOCS_WRITE_USERS || envConfig.NANOCLAW_GOOGLE_DOCS_WRITE_USERS,
+);
+export const GOOGLE_DOCS_WRITE_AGENT_GROUPS = csvSet(
+  process.env.NANOCLAW_GOOGLE_DOCS_WRITE_AGENT_GROUPS || envConfig.NANOCLAW_GOOGLE_DOCS_WRITE_AGENT_GROUPS,
+);
+export const GOOGLE_DOCS_WRITER_IDENTIFIER =
+  process.env.NANOCLAW_GOOGLE_DOCS_WRITER_IDENTIFIER ||
+  envConfig.NANOCLAW_GOOGLE_DOCS_WRITER_IDENTIFIER ||
+  'bobi-google-docs-writer';
 
 // Timezone for scheduled tasks, message formatting, etc.
 // Validates each candidate is a real IANA identifier before accepting.

@@ -18,9 +18,9 @@ function continuationKey(providerName: string): string {
 }
 
 function getValue(key: string): string | undefined {
-  const row = getOutboundDb()
-    .prepare('SELECT value FROM session_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
+  const row = getOutboundDb().prepare('SELECT value FROM session_state WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
   return row?.value;
 }
 
@@ -91,6 +91,7 @@ export function clearContinuation(providerName: string): void {
  * (journal_mode=DELETE + busy_timeout make intra-container access safe).
  */
 const IN_REPLY_TO_KEY = 'current_in_reply_to';
+const ACTION_SOURCE_KEY = 'current_action_source';
 
 /**
  * Ignore a stamp older than this. The poll loop clears the stamp in a
@@ -116,6 +117,29 @@ export function getCurrentInReplyTo(): string | null {
   const row = getOutboundDb()
     .prepare('SELECT value, updated_at FROM session_state WHERE key = ?')
     .get(IN_REPLY_TO_KEY) as { value: string; updated_at: string } | undefined;
+  if (!row) return null;
+  const age = Date.now() - new Date(row.updated_at).getTime();
+  if (!Number.isFinite(age) || age > IN_REPLY_TO_MAX_AGE_MS) return null;
+  return row.value;
+}
+
+/** Exact newest trigger message that may authorize a host-side action. */
+export function setCurrentActionSource(id: string | null): void {
+  if (id === null) {
+    clearCurrentActionSource();
+    return;
+  }
+  setValue(ACTION_SOURCE_KEY, id);
+}
+
+export function clearCurrentActionSource(): void {
+  deleteValue(ACTION_SOURCE_KEY);
+}
+
+export function getCurrentActionSource(): string | null {
+  const row = getOutboundDb()
+    .prepare('SELECT value, updated_at FROM session_state WHERE key = ?')
+    .get(ACTION_SOURCE_KEY) as { value: string; updated_at: string } | undefined;
   if (!row) return null;
   const age = Date.now() - new Date(row.updated_at).getTime();
   if (!Number.isFinite(age) || age > IN_REPLY_TO_MAX_AGE_MS) return null;
