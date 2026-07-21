@@ -10,6 +10,7 @@ import { createSlackAdapter } from '@chat-adapter/slack';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { extractSlackForwardedMessages } from './slack-forwarded-context.js';
 
 registerChannelAdapter('slack', {
   factory: () => {
@@ -25,7 +26,12 @@ registerChannelAdapter('slack', {
       appToken: env.SLACK_APP_TOKEN,
       mode: useSocketMode ? 'socket' : 'webhook',
     });
-    const bridge = createChatSdkBridge({ adapter: slackAdapter, concurrency: 'concurrent', supportsThreads: true });
+    const bridge = createChatSdkBridge({
+      adapter: slackAdapter,
+      concurrency: 'concurrent',
+      supportsThreads: true,
+      extractForwardedContext: extractSlackForwardedMessages,
+    });
     bridge.resolveChannelName = async (platformId: string) => {
       try {
         const info = await slackAdapter.fetchThread(platformId);
