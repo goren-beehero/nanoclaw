@@ -159,6 +159,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
     message: ChatMessage,
     isMention: boolean,
     isGroup?: boolean,
+    isThreadSubscribed = false,
   ): Promise<InboundMessage> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const serialized = message.toJSON() as Record<string, any>;
@@ -216,6 +217,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       content: serialized,
       timestamp: message.metadata.dateSent.toISOString(),
       isMention,
+      isThreadSubscribed,
       isGroup,
     };
   }
@@ -254,14 +256,15 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // bridge.subscribe(...) when a mention-sticky wiring engages.
 
       // Subscribed threads — every message in a thread we've previously
-      // engaged. Carry the SDK's `message.isMention` through so mention-mode
-      // wirings still fire on in-thread mentions.
+      // engaged. Carry both the SDK's mention signal and the stronger
+      // subscription signal so mention-sticky never mistakes an
+      // accumulate-only session for prior engagement.
       chat.onSubscribedMessage(async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
         await setupConfig.onInbound(
           channelId,
           thread.id,
-          await messageToInbound(message, message.isMention === true, true),
+          await messageToInbound(message, message.isMention === true, true, true),
         );
       });
 

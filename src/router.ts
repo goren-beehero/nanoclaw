@@ -27,12 +27,14 @@ import {
   getMessagingGroupAgents,
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
-import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
+import { reopenSlackOutOfScopeThread } from './db/slack-out-of-scope-threads.js';
+import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
+import { resolveSlackOutOfScopeThread } from './modules/slack-out-of-scope-threads.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
@@ -179,6 +181,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   }
 
   const isMention = event.message.isMention === true;
+  const isThreadSubscribed = event.message.isThreadSubscribed === true;
 
   // 1. Combined lookup: messaging_group row + count of wired agents in a
   //    single query. Cheap short-circuit for the common "unwired channel"
@@ -308,6 +311,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
 
   let engagedCount = 0;
   let accumulatedCount = 0;
+  let policyConsumedCount = 0;
   let subscribed = false;
 
   for (const agent of agents) {
@@ -329,12 +333,43 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     );
     const effectiveThreadId = threadsEnabled ? event.threadId : null;
 
-    const engages = evaluateEngage(agent, messageText, isMention, mg, effectiveThreadId);
+    const outOfScope = resolveSlackOutOfScopeThread({
+      event,
+      agentGroupId: agent.agent_group_id,
+    });
+    if (outOfScope.suppress) {
+      policyConsumedCount++;
+      continue;
+    }
+
+    const suppression = await resolveSlackThreadSuppression({
+      event,
+      agentGroupId: agent.agent_group_id,
+      resolvedSenderId: userId,
+      adapter,
+    });
+    // A duplicate policy event is consumed here as well: it must not wake the
+    // model a second time, regardless of whether the first event was allowed.
+    if (suppression.suppress || suppression.duplicate) {
+      policyConsumedCount++;
+      continue;
+    }
+
+    const engages = evaluateEngage(agent, messageText, isMention, isThreadSubscribed, mg);
 
     const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
     const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
 
     if (engages && accessOk && scopeOk) {
+      if (outOfScope.reopenRequested && event.threadId !== null) {
+        const reopened = reopenSlackOutOfScopeThread(agent.agent_group_id, event.platformId, event.threadId);
+        log.info('Slack out-of-scope thread reopened by authorized explicit mention', {
+          agentGroupId: agent.agent_group_id,
+          channelId: event.platformId,
+          threadId: event.threadId,
+          reopened,
+        });
+      }
       await deliverToAgent(agent, agentGroup, mg, event, userId, threadsEnabled, effectiveThreadId, true);
       engagedCount++;
 
@@ -380,7 +415,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     }
   }
 
-  if (engagedCount + accumulatedCount === 0) {
+  if (engagedCount + accumulatedCount === 0 && policyConsumedCount === 0) {
     recordDroppedMessage({
       channel_type: event.channelType,
       platform_id: event.platformId,
@@ -407,18 +442,17 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
  *                      user wants to disambiguate between multiple agents
  *                      wired to one chat, use engage_mode='pattern' with
  *                      the disambiguator as the regex.
- *   'mention-sticky' — platform mention OR an active per-thread session
- *                      already exists for this (agent, mg, thread). The
- *                      session existence IS our subscription state; once
- *                      a thread has engaged us once, follow-ups arrive
- *                      with no mention and should still fire.
+ *   'mention-sticky' — platform mention OR a platform-confirmed subscribed
+ *                      thread. Session existence is not enough because
+ *                      accumulate-mode context creates sessions without a
+ *                      real engagement.
  */
 function evaluateEngage(
   agent: MessagingGroupAgent,
   text: string,
   isMention: boolean,
+  isThreadSubscribed: boolean,
   mg: MessagingGroup,
-  threadId: string | null,
 ): boolean {
   switch (agent.engage_mode) {
     case 'pattern': {
@@ -435,11 +469,8 @@ function evaluateEngage(
       return isMention;
     case 'mention-sticky': {
       if (isMention) return true;
-      // Sticky follow-up: session already exists for this (agent, mg, thread)
-      // — the thread was activated before, keep firing.
       if (mg.is_group === 0) return false; // DMs never use mention-sticky sensibly
-      const existing = findSessionForAgent(agent.agent_group_id, mg.id, threadId);
-      return existing !== undefined;
+      return isThreadSubscribed;
     }
     default:
       return false;

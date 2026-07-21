@@ -15,8 +15,15 @@ import path from 'path';
 
 import { DATA_DIR } from '../src/config.js';
 
-const SILENCE_MS = 2000; // exit after this much quiet time following the first reply
-const TOTAL_TIMEOUT_MS = 120_000; // hard stop
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const SILENCE_MS = envMs('NANOCLAW_CHAT_SILENCE_MS', 2000); // exit after this much quiet time following the first reply
+const TOTAL_TIMEOUT_MS = envMs('NANOCLAW_CHAT_TIMEOUT_MS', 120_000); // hard stop before the first reply
 
 function socketPath(): string {
   return path.join(DATA_DIR, 'cli.sock');

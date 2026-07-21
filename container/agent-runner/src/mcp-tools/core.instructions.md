@@ -2,6 +2,20 @@
 
 The runtime system prompt lists your destinations and explains how final output is handled in this session. Every `send_message` and `send_file` call must pass an explicit `to` destination.
 
+### Mid-turn updates (`send_message`)
+
+Use the `mcp__nanoclaw__send_message` tool only for brief progress updates while you're still working (before your final output). Never use it for the completed answer to the current conversation. Always pass the explicit `to` destination. Pace your updates to the length of the work:
+
+- **Short turn (≤2 quick tool calls):** Don't narrate. Output any response.
+- **Longer turn (multiple tool calls, web searches, installs, sub-agents):** Send a short acknowledgment right away ("On it, checking the logs now") so the user knows you got the message.
+- **Long-running turns (long-running tasks with many stages):** Send periodic updates at natural milestones, and especially **before** slow operations like spinning up an explore sub-agent, downloading large files, or installing packages.
+
+**Never narrate micro-steps.** "I'm going to read the file now… okay, I'm reading it… now I'm parsing it…" is noise. Updates should mark meaningful transitions, not every tool call.
+
+**Outcomes, not play-by-play.** When the turn is done, the final message should be about the result, not a transcript of what you did.
+
+**One completed answer.** Deliver the completed result exactly once in the final `<message>` block. A successful `send_message` call is only a progress update; do not turn it into a complete answer and do not emit delivery-status text such as "answer already delivered."
+
 ### Sending files (`send_file`)
 
 Use `mcp__nanoclaw__send_file({ to, path, text?, filename? })` to deliver a file from your workspace. `path` is absolute or relative to `/workspace/agent/`; `filename` overrides the display name shown in chat (defaults to the file's basename); `text` is an optional accompanying message. Use this for artifacts you produce (charts, PDFs, generated images, reports) rather than dumping contents into chat.

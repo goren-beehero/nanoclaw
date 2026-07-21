@@ -7,7 +7,7 @@ import {
   type MessageInRow,
 } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
-import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
+import { getInboundDb, getOutboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
   clearCurrentInReplyTo,
@@ -766,15 +766,61 @@ function sendToDestination(dest: DestinationEntry, body: string, routing: Routin
   // different destinations have different thread contexts — using a single
   // routing.threadId would stamp one channel's thread onto another.
   const destRouting = resolveDestinationThread(channelType, platformId);
+  const inReplyTo = destRouting?.inReplyTo ?? routing.inReplyTo;
+
+  // send_message is progress-only, but keep a transport-level safety net for
+  // models that repeat an exact message or emit a delivery receipt after the
+  // real answer. Scope it to the same inbound turn and destination so a
+  // distinct progress update followed by a real final answer is preserved.
+  if (inReplyTo && shouldSuppressFinalMessage(channelType, platformId, inReplyTo, body)) {
+    log(`Suppressing redundant final message to ${dest.name} for inbound ${inReplyTo}`);
+    return;
+  }
+
   writeMessageOut({
     id: generateId(),
-    in_reply_to: destRouting?.inReplyTo ?? routing.inReplyTo,
+    in_reply_to: inReplyTo,
     kind: 'chat',
     platform_id: platformId,
     channel_type: channelType,
     thread_id: destRouting?.threadId ?? null,
     content: JSON.stringify({ text: body }),
   });
+}
+
+function shouldSuppressFinalMessage(channelType: string, platformId: string, inReplyTo: string, body: string): boolean {
+  try {
+    const rows = getOutboundDb()
+      .prepare(
+        `SELECT content FROM messages_out
+         WHERE kind = 'chat'
+           AND channel_type = ?
+           AND platform_id = ?
+           AND in_reply_to = ?
+         ORDER BY seq DESC`,
+      )
+      .all(channelType, platformId, inReplyTo) as Array<{ content: string }>;
+
+    const priorTexts = rows.flatMap((row) => {
+      try {
+        const content = JSON.parse(row.content) as { text?: unknown; operation?: unknown };
+        return !content.operation && typeof content.text === 'string' ? [content.text] : [];
+      } catch {
+        return [];
+      }
+    });
+    return priorTexts.includes(body) || (priorTexts.length > 0 && isDeliveryReceipt(body));
+  } catch (err) {
+    log(`duplicate outbound check failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+function isDeliveryReceipt(body: string): boolean {
+  const normalized = body.trim().replace(/\s+/g, ' ');
+  return /^(?:(?:the )?(?:answer|response|message) (?:was |has been |is )?)?already (?:delivered|sent|posted)(?: above)?[.!]?$/i.test(
+    normalized,
+  );
 }
 
 /**
