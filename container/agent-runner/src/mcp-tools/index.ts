@@ -10,6 +10,7 @@ import './interactive.js';
 import './agents.js';
 import './self-mod.js';
 import './knowledge-gaps.js';
+import './google-docs-write.js';
 import { startMcpServer } from './server.js';
 
 function log(msg: string): void {

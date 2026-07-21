@@ -35,6 +35,7 @@ import { getSession } from './db/sessions.js';
 import { reopenSlackOutOfScopeThread } from './db/slack-out-of-scope-threads.js';
 import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
 import { resolveSlackOutOfScopeThread } from './modules/slack-out-of-scope-threads.js';
+import { recordGoogleDocsWriteTurn } from './modules/google-docs-write/turn-authorization.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
@@ -535,8 +536,9 @@ async function deliverToAgent(
     }
   }
 
+  const sourceMessageId = messageIdForAgent(event.message.id, agent.agent_group_id);
   writeSessionMessage(session.agent_group_id, session.id, {
-    id: messageIdForAgent(event.message.id, agent.agent_group_id),
+    id: sourceMessageId,
     kind: event.message.kind,
     timestamp: event.message.timestamp,
     platformId: deliveryAddr.platformId,
@@ -558,6 +560,10 @@ async function deliverToAgent(
   });
 
   if (wake) {
+    // Host-owned, one-shot authorization provenance for privileged actions.
+    // Every engaged message replaces the prior turn, including non-owner
+    // messages, so an old owner message cannot authorize a later request.
+    recordGoogleDocsWriteTurn(session.id, sourceMessageId, userId);
     // Typing indicator + wake are only for the engaged branch; accumulated
     // messages sit silently until a real trigger fires.
     // Typing fires via the adapter instance that owns this chat's row.

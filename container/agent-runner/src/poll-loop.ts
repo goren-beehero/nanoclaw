@@ -10,9 +10,11 @@ import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, getOutboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
+  clearCurrentActionSource,
   clearCurrentInReplyTo,
   migrateLegacyContinuation,
   setContinuation,
+  setCurrentActionSource,
   setCurrentInReplyTo,
 } from './db/session-state.js';
 import {
@@ -249,6 +251,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
+    setCurrentActionSource(latestTriggerMessageId(keep));
     try {
       const result = await processQuery(
         query,
@@ -291,6 +294,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       // followed by a "Completed" line that reads like success.
       log(`Errored batch will be acked completed — ${processingIds.length} message(s), no redelivery`);
     } finally {
+      clearCurrentActionSource();
       clearCurrentInReplyTo();
     }
 
@@ -434,6 +438,7 @@ export async function processQuery(
         if (done) return;
 
         const keptIds = keep.map((m) => m.id);
+        setCurrentActionSource(latestTriggerMessageId(keep));
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
@@ -572,6 +577,15 @@ export async function processQuery(
   }
 
   return { continuation: queryContinuation };
+}
+
+function latestTriggerMessageId(messages: MessageInRow[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].trigger === 1 && (messages[i].kind === 'chat' || messages[i].kind === 'chat-sdk')) {
+      return messages[i].id;
+    }
+  }
+  return null;
 }
 
 function notifyExchangeComplete(
