@@ -38,6 +38,11 @@ vi.mock('./modules/typing/index.js', () => ({
 }));
 
 vi.mock('./channels/channel-registry.js', () => ({
+  getChannelDefaults: vi.fn(() => ({
+    dm: { engageMode: 'mention', threads: true, unknownSenderPolicy: 'strict' },
+    group: { engageMode: 'mention', threads: true, unknownSenderPolicy: 'public' },
+    mentions: 'platform',
+  })),
   getChannelAdapter: vi.fn(() => ({
     name: 'slack',
     channelType: 'slack',

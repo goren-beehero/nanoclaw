@@ -141,7 +141,13 @@ describe('composeGroupClaudeMd skill selection', () => {
     composeGroupClaudeMd(ag);
 
     const imports = importsOf(ag.folder);
-    expect(imports).toContain('@./.claude-fragments/skill-onecli-gateway.md');
-    expect(imports).toContain('@./.claude-fragments/skill-whatsapp-formatting.md');
+    const expectedSkillImports = fs
+      .readdirSync(path.join(process.cwd(), 'container', 'skills'))
+      .filter((skillName) =>
+        fs.existsSync(path.join(process.cwd(), 'container', 'skills', skillName, 'instructions.md')),
+      )
+      .map((skillName) => `@./.claude-fragments/skill-${skillName}.md`)
+      .sort();
+    expect(imports.filter((entry) => entry.includes('/skill-')).sort()).toEqual(expectedSkillImports);
   });
 });
