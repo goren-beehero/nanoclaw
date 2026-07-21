@@ -4,7 +4,7 @@
 
 ### Mid-turn updates (`send_message`)
 
-Use the `mcp__nanoclaw__send_message` tool to send a message while you're still working (before your final output). If you have one destination, `to` is optional; with multiple, specify it. Pace your updates to the length of the work:
+Use the `mcp__nanoclaw__send_message` tool only for brief progress updates while you're still working (before your final output). Never use it for the completed answer to the current conversation. If you have one destination, `to` is optional; with multiple, specify it. Pace your updates to the length of the work:
 
 - **Short turn (≤2 quick tool calls):** Don't narrate. Output any response.
 - **Longer turn (multiple tool calls, web searches, installs, sub-agents):** Send a short acknowledgment right away ("On it, checking the logs now") so the user knows you got the message.
@@ -14,7 +14,7 @@ Use the `mcp__nanoclaw__send_message` tool to send a message while you're still 
 
 **Outcomes, not play-by-play.** When the turn is done, the final message should be about the result, not a transcript of what you did.
 
-**Never send the same answer twice.** A successful `send_message` call has already delivered that text. Do not repeat or paraphrase it in the final response. If `send_message` delivered the complete answer and nothing else remains, return only `<internal>Answer already delivered.</internal>` so no second user-facing message is created.
+**One completed answer.** Deliver the completed result exactly once in the final `<message>` block. A successful `send_message` call is only a progress update; do not turn it into a complete answer and do not emit delivery-status text such as "answer already delivered."
 
 ### Sending files (`send_file`)
 

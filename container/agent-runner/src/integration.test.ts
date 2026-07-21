@@ -211,6 +211,31 @@ describe('poll loop integration', () => {
     await loopPromise.catch(() => {});
   });
 
+  it('suppresses a delivery receipt after MCP already sent the answer', async () => {
+    insertMessage('m1', { sender: 'Alice', text: 'check this' }, { platformId: 'chan-1', channelType: 'discord' });
+    writeMessageOut({
+      id: 'mcp-response',
+      in_reply_to: 'm1',
+      kind: 'chat',
+      platform_id: 'chan-1',
+      channel_type: 'discord',
+      content: JSON.stringify({ text: 'The substantive answer' }),
+    });
+
+    const provider = new MockProvider({}, () => '<message to="discord-test">Answer already delivered above.</message>');
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getPendingMessages().length === 0, 2000);
+    controller.abort();
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe('The substantive answer');
+
+    await loopPromise.catch(() => {});
+  });
+
   it('keeps a distinct final message after an MCP progress update', async () => {
     insertMessage('m1', { sender: 'Alice', text: 'check this' }, { platformId: 'chan-1', channelType: 'discord' });
     writeMessageOut({

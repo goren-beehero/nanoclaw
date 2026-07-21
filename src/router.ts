@@ -26,7 +26,6 @@ import {
   getMessagingGroupAgents,
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
-import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
@@ -181,6 +180,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   }
 
   const isMention = event.message.isMention === true;
+  const isThreadSubscribed = event.message.isThreadSubscribed === true;
 
   // 1. Combined lookup: messaging_group row + count of wired agents in a
   //    single query. Cheap short-circuit for the common "unwired channel"
@@ -323,7 +323,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       continue;
     }
 
-    const engages = evaluateEngage(agent, messageText, isMention, mg, event.threadId);
+    const engages = evaluateEngage(agent, messageText, isMention, isThreadSubscribed, mg);
 
     const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
     const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
@@ -409,18 +409,17 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
  *                      user wants to disambiguate between multiple agents
  *                      wired to one chat, use engage_mode='pattern' with
  *                      the disambiguator as the regex.
- *   'mention-sticky' — platform mention OR an active per-thread session
- *                      already exists for this (agent, mg, thread). The
- *                      session existence IS our subscription state; once
- *                      a thread has engaged us once, follow-ups arrive
- *                      with no mention and should still fire.
+ *   'mention-sticky' — platform mention OR a platform-confirmed subscribed
+ *                      thread. Session existence is not enough because
+ *                      accumulate-mode context creates sessions without a
+ *                      real engagement.
  */
 function evaluateEngage(
   agent: MessagingGroupAgent,
   text: string,
   isMention: boolean,
+  isThreadSubscribed: boolean,
   mg: MessagingGroup,
-  threadId: string | null,
 ): boolean {
   switch (agent.engage_mode) {
     case 'pattern': {
@@ -437,11 +436,8 @@ function evaluateEngage(
       return isMention;
     case 'mention-sticky': {
       if (isMention) return true;
-      // Sticky follow-up: session already exists for this (agent, mg, thread)
-      // — the thread was activated before, keep firing.
       if (mg.is_group === 0) return false; // DMs never use mention-sticky sensibly
-      const existing = findSessionForAgent(agent.agent_group_id, mg.id, threadId);
-      return existing !== undefined;
+      return isThreadSubscribed;
     }
     default:
       return false;

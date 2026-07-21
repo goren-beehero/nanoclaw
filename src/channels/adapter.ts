@@ -59,6 +59,8 @@ export interface InboundEvent {
      * See InboundMessage.isMention for the full explanation.
      */
     isMention?: boolean;
+    /** True when the platform delivered this through a previously subscribed thread. */
+    isThreadSubscribed?: boolean;
     /** True when the source is a group/channel thread, false for DMs. */
     isGroup?: boolean;
   };
@@ -86,6 +88,14 @@ export interface InboundMessage {
    * router falls back to text-match against agent_group_name.
    */
   isMention?: boolean;
+  /**
+   * Platform-confirmed signal that this message belongs to a thread the bot
+   * previously subscribed to after a real engagement.
+   *
+   * This is deliberately separate from session existence: accumulate-mode
+   * context creates sessions without activating the bot.
+   */
+  isThreadSubscribed?: boolean;
   /** True when the source is a group/channel thread, false for DMs. */
   isGroup?: boolean;
 }

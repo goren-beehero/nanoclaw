@@ -124,7 +124,7 @@ function buildDestinationsSection(): string {
   );
   lines.push('');
   lines.push(
-    'The `send_message` MCP tool is the same delivery, available mid-turn — handy for a quick acknowledgment ("on it") before a slow tool call. Each `send_message` call and each final-response `<message>` block lands as its own message in the conversation, so never repeat content already sent with `send_message` in the final response. If `send_message` already delivered the complete answer, finish with `<internal>Answer already delivered.</internal>` only.',
+    'Use the `send_message` MCP tool only for brief mid-turn progress updates such as "On it" while work continues. Never use it for the completed answer to the current conversation. Deliver the completed answer exactly once in the final `<message>` block, and never emit delivery-status text such as "answer already delivered".',
   );
   return lines.join('\n');
 }

@@ -576,6 +576,78 @@ describe('router', () => {
     expect(rows[0].trigger).toBe(0);
   });
 
+  it('keeps mention-sticky accumulation silent until the platform confirms subscription', async () => {
+    const { routeInbound } = await import('./router.js');
+    const { wakeContainer } = await import('./container-runner.js');
+    const wake = wakeContainer as unknown as ReturnType<typeof vi.fn>;
+    wake.mockClear();
+
+    const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
+    updateMessagingGroupAgent('mga-1', {
+      engage_mode: 'mention-sticky',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'per-thread',
+    });
+
+    const base = {
+      channelType: 'discord',
+      platformId: 'chan-123',
+      threadId: 'thread-sticky',
+    } as const;
+
+    await routeInbound({
+      ...base,
+      message: {
+        id: 'msg-root',
+        kind: 'chat',
+        content: JSON.stringify({ text: 'untagged root' }),
+        timestamp: now(),
+      },
+    });
+    await routeInbound({
+      ...base,
+      message: {
+        id: 'msg-plain-followup',
+        kind: 'chat',
+        content: JSON.stringify({ text: 'untagged follow-up' }),
+        timestamp: now(),
+      },
+    });
+    expect(wake).not.toHaveBeenCalled();
+
+    await routeInbound({
+      ...base,
+      message: {
+        id: 'msg-mention',
+        kind: 'chat',
+        content: JSON.stringify({ text: '@Bobi investigate' }),
+        timestamp: now(),
+        isMention: true,
+      },
+    });
+    await routeInbound({
+      ...base,
+      message: {
+        id: 'msg-subscribed-followup',
+        kind: 'chat',
+        content: JSON.stringify({ text: 'and compare yesterday' }),
+        timestamp: now(),
+        isThreadSubscribed: true,
+      },
+    });
+    expect(wake).toHaveBeenCalledTimes(2);
+
+    const session = findSession('mg-1', 'thread-sticky');
+    expect(session).toBeDefined();
+    const db = new Database(inboundDbPath('ag-1', session!.id));
+    const rows = db.prepare('SELECT id, trigger FROM messages_in ORDER BY seq').all() as Array<{
+      id: string;
+      trigger: number;
+    }>;
+    db.close();
+    expect(rows.map((row) => row.trigger)).toEqual([0, 0, 1, 1]);
+  });
+
   it('drops silently when engage fails + ignored_message_policy=drop', async () => {
     const { routeInbound } = await import('./router.js');
     const { wakeContainer } = await import('./container-runner.js');

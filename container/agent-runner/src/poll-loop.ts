@@ -657,12 +657,12 @@ function sendToDestination(dest: DestinationEntry, body: string, routing: Routin
   const destRouting = resolveDestinationThread(channelType, platformId);
   const inReplyTo = destRouting?.inReplyTo ?? routing.inReplyTo;
 
-  // send_message is available for mid-turn updates, but models sometimes use
-  // it for the full answer and then repeat that answer in the final <message>
-  // block. Both paths write independent outbound rows, so suppress an exact
-  // duplicate scoped to the same inbound turn and destination.
-  if (inReplyTo && hasMatchingOutboundMessage(channelType, platformId, inReplyTo, body)) {
-    log(`Suppressing duplicate final message to ${dest.name} for inbound ${inReplyTo}`);
+  // send_message is progress-only, but keep a transport-level safety net for
+  // models that repeat an exact message or emit a delivery receipt after the
+  // real answer. Scope it to the same inbound turn and destination so a
+  // distinct progress update followed by a real final answer is preserved.
+  if (inReplyTo && shouldSuppressFinalMessage(channelType, platformId, inReplyTo, body)) {
+    log(`Suppressing redundant final message to ${dest.name} for inbound ${inReplyTo}`);
     return;
   }
 
@@ -677,7 +677,7 @@ function sendToDestination(dest: DestinationEntry, body: string, routing: Routin
   });
 }
 
-function hasMatchingOutboundMessage(
+function shouldSuppressFinalMessage(
   channelType: string,
   platformId: string,
   inReplyTo: string,
@@ -695,18 +695,26 @@ function hasMatchingOutboundMessage(
       )
       .all(channelType, platformId, inReplyTo) as Array<{ content: string }>;
 
-    return rows.some((row) => {
+    const priorTexts = rows.flatMap((row) => {
       try {
         const content = JSON.parse(row.content) as { text?: unknown; operation?: unknown };
-        return !content.operation && content.text === body;
+        return !content.operation && typeof content.text === 'string' ? [content.text] : [];
       } catch {
-        return false;
+        return [];
       }
     });
+    return priorTexts.includes(body) || (priorTexts.length > 0 && isDeliveryReceipt(body));
   } catch (err) {
     log(`duplicate outbound check failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
+}
+
+function isDeliveryReceipt(body: string): boolean {
+  const normalized = body.trim().replace(/\s+/g, ' ');
+  return /^(?:(?:the )?(?:answer|response|message) (?:was |has been |is )?)?already (?:delivered|sent|posted)(?: above)?[.!]?$/i.test(
+    normalized,
+  );
 }
 
 /**

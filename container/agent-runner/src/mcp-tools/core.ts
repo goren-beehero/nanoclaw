@@ -95,7 +95,8 @@ function resolveRouting(
 export const sendMessage: McpToolDefinition = {
   tool: {
     name: 'send_message',
-    description: 'Send a message to a named destination. If you have only one destination, you can omit `to`.',
+    description:
+      'Send a brief progress update while work continues. Do not use for the completed answer to the current conversation. If you have only one destination, you can omit `to`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -127,7 +128,9 @@ export const sendMessage: McpToolDefinition = {
     });
 
     log(`send_message: #${seq} → ${routing.resolvedName}`);
-    return ok(`Message sent to ${routing.resolvedName} (id: ${seq})`);
+    return ok(
+      `Progress update sent to ${routing.resolvedName} (id: ${seq}). Continue working and return the completed answer in your final <message> block.`,
+    );
   },
 };
 
