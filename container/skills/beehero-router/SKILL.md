@@ -25,14 +25,30 @@ Fallback only: route BeeHero work when the mounted canonical AGENTS.md cannot be
 - For a known JSON artifact, use `/workspace/agent/bin/json-evidence` once to extract the requested entity and relevant sections. Pass the user's entity phrase once with `--match`; numeric ids are extracted automatically. Do not add `--contains`, inspect the helper source, pipe through `head`, or probe the same JSON schema in repeated commands.
 - If an exact requested JSON path is absent, report it as absent. Inspect at most one documented nearest replacement; do not reconstruct the missing field from unrelated sections.
 - For AWS-backed queries, use `/workspace/agent/bin/beehero-runtime` and the repo-native `cached_query(..., workgroup="data_lake_data_science")` path.
-- When the routed source does not name a database, check the exact relevant
-  relation in Athena's `data_lake_*` schemas first. Use Postgres only after
-  confirming that relation is absent there. Do not probe a `production-db`
-  catalog in between; zero rows and data-lake execution errors are not absence.
+- When the routed source does not name a database, run
+  `/workspace/agent/bin/beehero-source-resolver <exact-relation>` once. Use the
+  returned Athena relation when present, or Postgres only when it returns
+  `postgres_replica`. Do not replace this with `SHOW TABLES`, wildcard catalog
+  searches, repeated schema probes, or a `production-db` lookup. A resolver
+  error is not absence; fix or report it. Zero rows in an existing relation are
+  still an answer, not a reason to fall back.
 - For a routed read-only Postgres query, run the bounded repository-owned
-  command through `/workspace/agent/bin/with-replica-env`. Never print or
-  persist `REPLICA_*` values.
-- Combine bounded related queries into one command and one Python process.
+  `/workspace/agent/bin/beehero-replica-query` command. Pass SQL with one
+  heredoc; the command owns credential loading, read-only enforcement, timeout,
+  and row bounds. Do not inspect `with-replica-env`, search for database
+  controllers, or write one-off connection code. Never print or persist
+  `REPLICA_*` values.
+- A fresh replica-only investigation may use at most two replica-query calls:
+  `/workspace/agent/bin/beehero-replica-query --describe <relation>` when live
+  columns are not already verified, then one result query. Do not run `ls`,
+  `head`, `--help`, inspect helper source, or issue a separate time query. Include
+  `NOW()` in the result query when needed. Combine summary and detail using CTEs,
+  conditional aggregation, JSON aggregates, scalar subqueries, or `UNION ALL`.
+  Use PostgreSQL syntax: rank in a CTE and filter in an outer query; do not use
+  Athena-only `QUALIFY`.
+- Never post `placeholder`, synthetic progress text, or another throwaway
+  message to obtain a message ID or attach a reaction. At most one meaningful
+  progress message is allowed when the real query is expected to exceed 60s.
 - Every non-trivial join must come from agents-kb, current repo code, or verified schema/keys. Do not improvise joins or substitute proxies.
 - Keep clients, groups, seasons, farms, orchards, yards, points, sensors, and hives as distinct units.
 - Stop when the requested claim is supported. Fresh-question budgets, including this skill and routing reads: exact lookup 5 tool calls; one-table query 6; dated artifact 7. At the budget, answer with the supported result and one explicit limitation.
