@@ -179,11 +179,12 @@ function formatSingleChat(msg: MessageInRow): string {
   const idAttr = msg.seq != null ? ` id="${msg.seq}"` : '';
   const replyAttr = content.replyTo?.id ? ` reply_to="${escapeXml(String(content.replyTo.id))}"` : '';
   const replyPrefix = formatReplyContext(content.replyTo);
+  const forwardedSuffix = formatForwardedMessages(content.forwardedMessages);
   const attachmentsSuffix = formatAttachments(content.attachments);
 
   const fromAttr = originAttr(msg);
 
-  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${attachmentsSuffix}</message>`;
+  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${forwardedSuffix}${attachmentsSuffix}</message>`;
 }
 
 /**
@@ -263,6 +264,26 @@ function formatReplyContext(replyTo: any): string {
   const text = replyTo.text;
   if (!sender || !text) return '';
   return `\n  <quoted_message from="${escapeXml(sender)}">${escapeXml(text)}</quoted_message>\n`;
+}
+
+// Forwarded messages are quoted evidence, not additional instructions or
+// platform events. In particular, mentions inside them must not be interpreted
+// as a fresh user mention.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatForwardedMessages(forwardedMessages: any[] | undefined): string {
+  if (!Array.isArray(forwardedMessages) || forwardedMessages.length === 0) return '';
+
+  const parts = forwardedMessages.flatMap((forwarded) => {
+    if (!forwarded || typeof forwarded.text !== 'string' || !forwarded.text.trim()) return [];
+    const senderAttr = forwarded.sender ? ` from="${escapeXml(String(forwarded.sender))}"` : '';
+    const sourceAttr = forwarded.sourceUrl ? ` source="${escapeXml(String(forwarded.sourceUrl))}"` : '';
+    const timeAttr = forwarded.timestamp ? ` timestamp="${escapeXml(String(forwarded.timestamp))}"` : '';
+    return [
+      `  <forwarded_message quoted_context="true"${senderAttr}${sourceAttr}${timeAttr}>${escapeXml(forwarded.text)}</forwarded_message>`,
+    ];
+  });
+
+  return parts.length > 0 ? `\n<forwarded_messages>\n${parts.join('\n')}\n</forwarded_messages>` : '';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

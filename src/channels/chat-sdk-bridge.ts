@@ -45,6 +45,18 @@ export interface ReplyContext {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReplyContextExtractor = (raw: Record<string, any>) => ReplyContext | null;
 
+/** A message quoted through a platform's native forwarding UI. */
+export interface ForwardedMessageContext {
+  text: string;
+  sender?: string;
+  sourceUrl?: string;
+  timestamp?: string;
+}
+
+/** Extract native forwarded-message context without retaining the full raw payload. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ForwardedContextExtractor = (raw: Record<string, any>) => ForwardedMessageContext[];
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   /**
@@ -61,6 +73,8 @@ export interface ChatSdkBridgeConfig {
   botToken?: string;
   /** Platform-specific reply context extraction. */
   extractReplyContext?: ReplyContextExtractor;
+  /** Platform-specific forwarded-message extraction. */
+  extractForwardedContext?: ForwardedContextExtractor;
   /**
    * Whether this platform uses threads as the primary conversation unit.
    * See `ChannelAdapter.supportsThreads`. Declared by the calling channel
@@ -195,6 +209,15 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const replyTo = config.extractReplyContext(message.raw as Record<string, any>);
       if (replyTo) serialized.replyTo = replyTo;
+    }
+
+    // Preserve only the bounded, user-visible part of a platform-native
+    // forward. Slack keeps forwarded message text in raw legacy attachments,
+    // which are otherwise intentionally discarded below.
+    if (config.extractForwardedContext && message.raw) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const forwardedMessages = config.extractForwardedContext(message.raw as Record<string, any>);
+      if (forwardedMessages.length > 0) serialized.forwardedMessages = forwardedMessages;
     }
 
     // Project chat-sdk's nested author into the flat sender fields the router
