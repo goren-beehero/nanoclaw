@@ -21,6 +21,7 @@ import type { ChannelDefaults } from '../../channels/adapter.js';
 import { registerChannelAdapter } from '../../channels/channel-registry.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from '../../db/index.js';
 import { createMessagingGroupAgent, getMessagingGroupAgent } from '../../db/messaging-groups.js';
+import { getDestinationByTarget } from '../../modules/agent-to-agent/db/agent-destinations.js';
 import { lookup } from '../registry.js';
 // Side-effect import: registers wirings-create / wirings-update.
 import './wirings.js';
@@ -106,6 +107,14 @@ describe('wirings-create — declaration-derived defaults', () => {
     const row = await create({ messaging_group_id: 'mg-stale', agent_group_id: 'ag-1' });
     expect(row.engage_mode).toBe('mention');
     expect(row.engage_pattern).toBeUndefined();
+  });
+
+  it('atomically creates the outbound destination for the new wiring', async () => {
+    await create({ messaging_group_id: 'mg-stale', agent_group_id: 'ag-1' });
+
+    const destination = getDestinationByTarget('ag-1', 'channel', 'mg-stale');
+    expect(destination).toBeDefined();
+    expect(destination?.local_name).toMatch(/^stalechan-/);
   });
 });
 

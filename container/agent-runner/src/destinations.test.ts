@@ -40,6 +40,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
 
     expect(prompt).toContain('Wrap each delivered message');
     expect(prompt).toContain('<message to="name">');
+    expect(prompt).toContain('only for a brief mid-turn progress update');
+    expect(prompt).toContain('Never use it for the completed answer');
+    expect(prompt).not.toContain('<internal>Answer already delivered.</internal>');
     expect(prompt).toContain('`casa`');
   });
 

@@ -15,7 +15,11 @@ vi.mock('./log.js', () => ({
 }));
 
 import { composeGroupClaudeMd } from './claude-md-compose.js';
-import { ensureContainerConfig, updateContainerConfigScalars } from './db/container-configs.js';
+import {
+  ensureContainerConfig,
+  updateContainerConfigJson,
+  updateContainerConfigScalars,
+} from './db/container-configs.js';
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
 import { PERSONA_PREPEND_FILE } from './group-persona.js';
 import type { AgentGroup } from './types.js';
@@ -108,11 +112,42 @@ describe('composeGroupClaudeMd scheduling instructions (ncl tasks reach-in)', ()
     const ag = group('ag-sched-off', 'sched-group-off');
     seed(ag);
     updateContainerConfigScalars(ag.id, { cli_scope: 'disabled' });
-
     composeGroupClaudeMd(ag);
 
     const imports = importsOf(ag.folder);
     expect(imports).not.toContain('@./.claude-fragments/module-scheduling.md');
     expect(imports).not.toContain('@./.claude-fragments/module-cli.md');
+  });
+});
+
+describe('composeGroupClaudeMd skill selection', () => {
+  it('imports only explicitly selected skill fragments', () => {
+    const ag = group('ag-selected-skill', 'selected-skill-group');
+    seed(ag);
+    updateContainerConfigJson(ag.id, 'skills', ['onecli-gateway']);
+
+    composeGroupClaudeMd(ag);
+
+    const imports = importsOf(ag.folder);
+    expect(imports).toContain('@./.claude-fragments/skill-onecli-gateway.md');
+    expect(imports).not.toContain('@./.claude-fragments/skill-whatsapp-formatting.md');
+  });
+
+  it('imports every available skill fragment when configured as all', () => {
+    const ag = group('ag-all-skills', 'all-skills-group');
+    seed(ag);
+    updateContainerConfigJson(ag.id, 'skills', 'all');
+
+    composeGroupClaudeMd(ag);
+
+    const imports = importsOf(ag.folder);
+    const expectedSkillImports = fs
+      .readdirSync(path.join(process.cwd(), 'container', 'skills'))
+      .filter((skillName) =>
+        fs.existsSync(path.join(process.cwd(), 'container', 'skills', skillName, 'instructions.md')),
+      )
+      .map((skillName) => `@./.claude-fragments/skill-${skillName}.md`)
+      .sort();
+    expect(imports.filter((entry) => entry.includes('/skill-')).sort()).toEqual(expectedSkillImports);
   });
 });

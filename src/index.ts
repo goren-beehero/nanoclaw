@@ -99,6 +99,7 @@ async function main(): Promise<void> {
             content: JSON.stringify(message.content),
             timestamp: message.timestamp,
             isMention: message.isMention,
+            isThreadSubscribed: message.isThreadSubscribed,
             isGroup: message.isGroup,
           },
         }).catch((err) => {

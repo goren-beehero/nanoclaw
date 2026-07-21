@@ -59,6 +59,8 @@ export interface InboundEvent {
      * See InboundMessage.isMention for the full explanation.
      */
     isMention?: boolean;
+    /** True when the platform delivered this through a previously subscribed thread. */
+    isThreadSubscribed?: boolean;
     /** True when the source is a group/channel thread, false for DMs. */
     isGroup?: boolean;
   };
@@ -87,6 +89,14 @@ export interface InboundMessage {
    * src/router.ts). There is no text-match fallback.
    */
   isMention?: boolean;
+  /**
+   * Platform-confirmed signal that this message belongs to a thread the bot
+   * previously subscribed to after a real engagement.
+   *
+   * This is deliberately separate from session existence: accumulate-mode
+   * context creates sessions without activating the bot.
+   */
+  isThreadSubscribed?: boolean;
   /** True when the source is a group/channel thread, false for DMs. */
   isGroup?: boolean;
 }
@@ -162,6 +172,12 @@ export interface ChannelDefaults {
   mentions: 'platform' | 'dm-only' | 'never';
 }
 
+/** Minimal immutable metadata used by host-side Slack thread policy. */
+export interface ThreadRootMetadata {
+  userId: string;
+  text: string;
+}
+
 /** The v2 channel adapter contract. */
 export interface ChannelAdapter {
   name: string;
@@ -200,6 +216,12 @@ export interface ChannelAdapter {
   setTyping?(platformId: string, threadId: string | null): Promise<void>;
   syncConversations?(): Promise<ConversationInfo[]>;
   resolveChannelName?(platformId: string): Promise<string | null>;
+
+  /** Resolve the immutable platform user ID of a thread's root author. */
+  resolveThreadRootUserId?(platformId: string, threadId: string): Promise<string | null>;
+
+  /** Resolve the root author and raw platform text in one request. */
+  resolveThreadRootMetadata?(platformId: string, threadId: string): Promise<ThreadRootMetadata | null>;
 
   /**
    * Subscribe the bot to a thread so follow-up messages route via the
