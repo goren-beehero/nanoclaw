@@ -120,6 +120,20 @@ describe('composeGroupClaudeMd scheduling instructions (ncl tasks reach-in)', ()
   });
 });
 
+describe('composeGroupClaudeMd knowledge-gap policy', () => {
+  it('imports the capability decision contract for groups with the built-in tool', () => {
+    const ag = group('ag-gap-policy', 'gap-policy-group');
+    seed(ag);
+
+    composeGroupClaudeMd(ag);
+
+    expect(importsOf(ag.folder)).toContain('@./.claude-fragments/module-knowledge-gaps.md');
+    expect(fs.readlinkSync(path.join(GROUPS_DIR, ag.folder, '.claude-fragments', 'module-knowledge-gaps.md'))).toBe(
+      '/app/src/mcp-tools/knowledge-gaps.instructions.md',
+    );
+  });
+});
+
 describe('composeGroupClaudeMd skill selection', () => {
   it('imports only explicitly selected skill fragments', () => {
     const ag = group('ag-selected-skill', 'selected-skill-group');
