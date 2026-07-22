@@ -46,6 +46,24 @@ def classify_bash_command(command: str) -> tuple[bool, bool, bool]:
     return mounted_write, workspace_write, broad_search
 
 
+def is_broad_search_tool(tool_name: str, tool_input: dict) -> bool:
+    if tool_name not in {"Grep", "Glob"}:
+        return False
+    path = str(tool_input.get("path") or "").rstrip("/")
+    broad_roots = {
+        "/",
+        "~",
+        "/home",
+        "/workspace/extra",
+        "/workspace/extra/agents-team",
+        "/workspace/extra/agents-kb",
+        "/workspace/extra/ds-pip",
+        "/workspace/extra/ds-paas",
+        "/opt/repos",
+    }
+    return path in broad_roots
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("session_id")
@@ -141,6 +159,10 @@ def main() -> None:
                             current_turn["subagent_calls"] += 1
                         if tool_name.endswith("record_knowledge_gap"):
                             current_turn["knowledge_gap_calls"] += 1
+                        if is_broad_search_tool(tool_name, tool_input):
+                            current_turn["broad_search_attempts"].append(
+                                f"{tool_name}:{tool_input.get('path') or 'unknown'}"
+                            )
                         if tool_name in {"Write", "Edit", "NotebookEdit"}:
                             target = _write_target(tool_input)
                             event = f"{tool_name}:{target or 'unknown'}"

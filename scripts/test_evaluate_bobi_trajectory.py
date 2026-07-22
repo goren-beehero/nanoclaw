@@ -13,6 +13,7 @@ assert TRACE_SPEC and TRACE_SPEC.loader
 TRACE_MODULE = importlib.util.module_from_spec(TRACE_SPEC)
 TRACE_SPEC.loader.exec_module(TRACE_MODULE)
 classify_bash_command = TRACE_MODULE.classify_bash_command
+is_broad_search_tool = TRACE_MODULE.is_broad_search_tool
 
 
 class EvaluateBobiTrajectoryTests(unittest.TestCase):
@@ -24,6 +25,13 @@ class EvaluateBobiTrajectoryTests(unittest.TestCase):
         self.assertEqual(
             classify_bash_command("python make_report.py > /workspace/agent/report.html"),
             (False, True, False),
+        )
+        self.assertTrue(is_broad_search_tool("Grep", {"path": "/workspace/extra/agents-team"}))
+        self.assertFalse(
+            is_broad_search_tool(
+                "Grep",
+                {"path": "/workspace/extra/agents-kb/KB/knowledge/data-model.md"},
+            )
         )
 
     def test_supported_turn_accepts_workspace_artifact_only(self) -> None:
