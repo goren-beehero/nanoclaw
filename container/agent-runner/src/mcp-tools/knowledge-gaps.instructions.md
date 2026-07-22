@@ -24,6 +24,12 @@ not gaps. Do not repeat a gap because the user changed only the output format.
 On a turn that genuinely ends at an unsupported boundary, emit one canonical
 gap event and one user-facing answer.
 
+A proven absence of a required historical source, audit ledger, or retained
+entity-grain snapshot is `missing_capability`, even when the current-state
+source exists and the evidence boundary can be explained to the user. After the
+bounded canonical attempt, call `record_knowledge_gap` once before answering;
+do not silently replace the required gap event with only an explanation.
+
 Previous answers and entity-specific memory are never evidence. Reviewed
 schema and procedure knowledge may select a route, but current values must be
 queried again. Do not write answer memory during ordinary reads and do not try

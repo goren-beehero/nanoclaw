@@ -18,7 +18,7 @@ export const recordKnowledgeGap: McpToolDefinition = {
   tool: {
     name: 'record_knowledge_gap',
     description:
-      'Write-only: queue one genuinely unsupported route, capability, or action for offline operator review. Before a read/analysis gap, attempt the routed canonical source or composable repository loader; absence of an exact report runner or a requested output-format change is not a gap. Do not use for out-of-domain requests, ambiguity, missing user inputs, transient failures, or known routes. This tool cannot read the backlog.',
+      'Write-only: queue one genuinely unsupported route, capability, or action for offline operator review. Before a read/analysis gap, attempt the routed canonical source or composable repository loader; a proven absent historical source or audit ledger is missing_capability, while absence of an exact report runner or a requested output-format change is not a gap. Do not use for out-of-domain requests, ambiguity, missing user inputs, transient failures, or known routes. This tool cannot read the backlog.',
     inputSchema: {
       type: 'object' as const,
       properties: {
