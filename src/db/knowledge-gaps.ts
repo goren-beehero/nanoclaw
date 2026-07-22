@@ -54,10 +54,27 @@ export function normalizeCapabilityKey(value: string): string {
   return normalized.replace(/^(?:run|execute|trigger|start|launch|perform|invoke|initiate)\s+/, '');
 }
 
+function canonicalFingerprintKey(value: string): string {
+  const tokens = normalizeCapabilityKey(value)
+    .replace(/\b(?:registry|deregistration)\b/g, 'registration')
+    .replace(/\b(?:historical|audit|ledger|trail)\b/g, 'history')
+    .split(' ')
+    .filter(Boolean);
+  return [...new Set(tokens)].sort().join(' ');
+}
+
 export function knowledgeGapFingerprint(category: KnowledgeGapCategory, capabilityKey: string): string {
-  const normalized = normalizeCapabilityKey(capabilityKey);
+  const normalized = canonicalFingerprintKey(capabilityKey);
   if (!normalized) throw new Error('capability_key must contain a stable capability description');
   return createHash('sha256').update(`${category}\n${normalized}`).digest('hex');
+}
+
+function existingCanonicalFingerprint(category: KnowledgeGapCategory, capabilityKey: string): string | null {
+  const canonical = canonicalFingerprintKey(capabilityKey);
+  const rows = getDb()
+    .prepare('SELECT fingerprint, capability_key FROM knowledge_gaps WHERE category = ?')
+    .all(category) as { fingerprint: string; capability_key: string }[];
+  return rows.find((row) => canonicalFingerprintKey(row.capability_key) === canonical)?.fingerprint ?? null;
 }
 
 export function redactKnowledgeGapText(value: string): string {
@@ -117,7 +134,9 @@ function recomputeCanonical(fingerprint: string): void {
 
 export function recordKnowledgeGap(input: KnowledgeGapInput): { record: KnowledgeGapRecord; inserted: boolean } {
   const capabilityKey = normalizeCapabilityKey(input.capabilityKey);
-  const fingerprint = knowledgeGapFingerprint(input.category, capabilityKey);
+  const fingerprint =
+    existingCanonicalFingerprint(input.category, capabilityKey) ??
+    knowledgeGapFingerprint(input.category, capabilityKey);
   const now = new Date().toISOString();
   const example = input.example ? redactKnowledgeGapText(input.example) : null;
 

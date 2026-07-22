@@ -38,6 +38,38 @@ describe('knowledge gap storage', () => {
     expect(new Set(keys.map((key) => knowledgeGapFingerprint('unsupported_action', key))).size).toBe(1);
   });
 
+  it('deduplicates registration history aliases', () => {
+    const keys = [
+      'gateway registry deregistration audit trail',
+      'historical gateway registration ledger',
+    ];
+    expect(new Set(keys.map((key) => knowledgeGapFingerprint('missing_capability', key))).size).toBe(1);
+  });
+
+  it('reuses a matching legacy fingerprint already stored in the registry', () => {
+    getDb()
+      .prepare(
+        `INSERT INTO knowledge_gaps
+           (fingerprint, category, capability_key, summary, scope_boundary, route_attempted, status,
+            first_seen_at, last_seen_at, occurrence_count, example_count, examples, test_run_id)
+         VALUES ('legacy-gateway-gap', 'missing_capability',
+                 'gateway registry deregistration audit trail', 'summary', 'boundary', 'route',
+                 'open', '2026-07-21T00:00:00.000Z', '2026-07-21T00:00:00.000Z', 0, 0, '[]', NULL)`,
+      )
+      .run();
+
+    const result = recordKnowledgeGap({
+      ...base,
+      category: 'missing_capability',
+      capabilityKey: 'historical gateway registration ledger',
+      sourceEventKey: 'gateway:2',
+    });
+
+    expect(result.record.fingerprint).toBe('legacy-gateway-gap');
+    expect(result.record.occurrence_count).toBe(1);
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM knowledge_gaps').get() as { n: number }).n).toBe(1);
+  });
+
   it('deduplicates paraphrases and duplicate source events', () => {
     const one = recordKnowledgeGap({
       ...base,
