@@ -16,6 +16,7 @@ describe('record_knowledge_gap tool', () => {
     expect(recordKnowledgeGap.tool.description).toContain('attempt the routed canonical source');
     expect(recordKnowledgeGap.tool.description).toContain('absence of an exact report runner');
     expect(recordKnowledgeGap.tool.description).toContain('absent historical source or audit ledger');
+    expect(recordKnowledgeGap.tool.description).toContain('must record exactly one unsupported_action');
     expect(recordKnowledgeGap.tool.description).toContain('output-format change is not a gap');
     expect(recordKnowledgeGap.tool.description).toContain('out-of-domain requests');
   });

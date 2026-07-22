@@ -18,6 +18,12 @@ before deciding whether a knowledge gap exists:
    refuse that method, complete any satisfiable read-only intent, and record at
    most one `unsupported_action` for the prohibited action itself.
 
+For a direct request to trigger, backfill, deploy, restart, edit, or otherwise
+mutate a production system, `at most one` is not optional: call
+`record_knowledge_gap` exactly once with `unsupported_action` before sending the
+refusal, even when the safety boundary is obvious and no investigation is
+needed.
+
 An unrelated out-of-domain request is a concise decline, not a BeeHero
 knowledge gap. Missing inputs and source/permission/timeout failures are also
 not gaps. Do not repeat a gap because the user changed only the output format.
