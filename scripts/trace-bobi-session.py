@@ -13,6 +13,37 @@ from pathlib import Path
 
 
 AGENT_GROUP_ID = "ag-1783583592620-z4xczb"
+MOUNTED_REPO_ROOTS = ("/workspace/extra", "/opt/repos")
+WORKSPACE_ARTIFACT_ROOT = "/workspace/agent"
+
+
+def _write_target(tool_input: dict) -> str:
+    for key in ("file_path", "path", "notebook_path"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def classify_bash_command(command: str) -> tuple[bool, bool, bool]:
+    """Return mounted-write, workspace-artifact-write, broad-search flags."""
+    write_verb = r"(?:tee|cp|mv|rm|mkdir|touch|install)"
+    redirect = r">>?\s*"
+    mounted_write = any(
+        re.search(rf"(?:{write_verb})\s+[^\n]*{re.escape(root)}", command)
+        or re.search(rf"{redirect}{re.escape(root)}", command)
+        for root in MOUNTED_REPO_ROOTS
+    )
+    workspace_write = bool(
+        re.search(rf"(?:{write_verb})\s+[^\n]*{re.escape(WORKSPACE_ARTIFACT_ROOT)}", command)
+        or re.search(rf"{redirect}{re.escape(WORKSPACE_ARTIFACT_ROOT)}", command)
+    )
+    broad_search = bool(
+        re.search(r"\bfind\s+(?:/|~|\$HOME|/home)(?:\s|$)", command)
+        or re.search(r"\b(?:rg|grep)\b[^\n]*(?:\s~(?:\s|$)|\s\$HOME(?:\s|$)|\s/home(?:\s|$))", command)
+        or re.search(r"\b(?:rg|grep|find)\b[^\n]*\s/workspace/extra(?:\s|$)", command)
+    )
+    return mounted_write, workspace_write, broad_search
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +110,11 @@ def main() -> None:
                     "tool_names": [],
                     "tool_errors": 0,
                     "write_attempts": [],
+                    "mounted_repo_write_attempts": [],
+                    "workspace_artifact_write_attempts": [],
+                    "broad_search_attempts": [],
+                    "subagent_calls": 0,
+                    "knowledge_gap_calls": 0,
                 }
                 trace_turns.append(current_turn)
 
@@ -101,13 +137,22 @@ def main() -> None:
                         current_turn["tool_names"].append(tool_name)
                         tool_input = item.get("input") or {}
                         command = str(tool_input.get("command") or "")
+                        if tool_name in {"Agent", "Task"}:
+                            current_turn["subagent_calls"] += 1
+                        if tool_name.endswith("record_knowledge_gap"):
+                            current_turn["knowledge_gap_calls"] += 1
                         if tool_name in {"Write", "Edit", "NotebookEdit"}:
-                            current_turn["write_attempts"].append(tool_name)
+                            target = _write_target(tool_input)
+                            event = f"{tool_name}:{target or 'unknown'}"
+                            if target.startswith(MOUNTED_REPO_ROOTS):
+                                current_turn["mounted_repo_write_attempts"].append(event)
+                                current_turn["write_attempts"].append(event)
+                            elif target.startswith(WORKSPACE_ARTIFACT_ROOT):
+                                current_turn["workspace_artifact_write_attempts"].append(event)
+                            else:
+                                current_turn["write_attempts"].append(event)
                         elif tool_name == "Bash":
-                            source_write = re.search(
-                                r"(?:tee|cp|mv|rm|mkdir|touch)\s+[^\n]*(?:/workspace/(?:extra|agent)|/opt/repos)",
-                                command,
-                            ) or re.search(r">>?\s*(?:/workspace/(?:extra|agent)|/opt/repos)", command)
+                            mounted_write, workspace_write, broad_search = classify_bash_command(command)
                             artifact_write = any(
                                 marker in command
                                 for marker in (
@@ -115,7 +160,14 @@ def main() -> None:
                                     "run_analysis.py", " deploy", " publish",
                                 )
                             )
-                            if source_write or artifact_write:
+                            if mounted_write:
+                                current_turn["mounted_repo_write_attempts"].append(command[:180])
+                                current_turn["write_attempts"].append(command[:180])
+                            if workspace_write:
+                                current_turn["workspace_artifact_write_attempts"].append(command[:180])
+                            if broad_search:
+                                current_turn["broad_search_attempts"].append(command[:180])
+                            if artifact_write and not workspace_write:
                                 current_turn["write_attempts"].append(command[:180])
                 elif item.get("type") == "tool_result" and item.get("is_error"):
                     tool_errors += 1
@@ -153,7 +205,8 @@ def main() -> None:
     with sqlite3.connect(f"file:{outbound_db}?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
         outbound = list(db.execute(
-            "SELECT id, seq, in_reply_to, timestamp, kind, content FROM messages_out ORDER BY seq"
+            "SELECT id, seq, in_reply_to, timestamp, kind, content, channel_type, platform_id "
+            "FROM messages_out ORDER BY seq"
         ))
 
     def parse_time(value: str | None) -> datetime | None:
@@ -204,6 +257,19 @@ def main() -> None:
             "tool_errors": trace_turn.get("tool_errors", 0),
             "peak_context_tokens": turn_peak,
             "write_attempts": trace_turn.get("write_attempts", []),
+            "mounted_repo_write_attempts": trace_turn.get("mounted_repo_write_attempts", []),
+            "workspace_artifact_write_attempts": trace_turn.get("workspace_artifact_write_attempts", []),
+            "broad_search_attempts": trace_turn.get("broad_search_attempts", []),
+            "subagent_calls": trace_turn.get("subagent_calls", 0),
+            "knowledge_gap_calls": trace_turn.get("knowledge_gap_calls", 0),
+            "outbound_kind_counts": dict(Counter(row["kind"] for row in replies)),
+            "outbound_destinations": sorted(
+                {
+                    f"{row['channel_type']}:{row['platform_id']}"
+                    for row in replies
+                    if row["channel_type"] or row["platform_id"]
+                }
+            ),
         })
 
     print(

@@ -12,6 +12,13 @@ beforeEach(() => {
 afterEach(() => closeSessionDb());
 
 describe('record_knowledge_gap tool', () => {
+  it('describes the canonical-source attempt and exact-runner boundary', () => {
+    expect(recordKnowledgeGap.tool.description).toContain('attempt the routed canonical source');
+    expect(recordKnowledgeGap.tool.description).toContain('absence of an exact report runner');
+    expect(recordKnowledgeGap.tool.description).toContain('output-format change is not a gap');
+    expect(recordKnowledgeGap.tool.description).toContain('out-of-domain requests');
+  });
+
   it('queues one internal write-only event without a delivery destination', async () => {
     const result = await recordKnowledgeGap.handler({
       category: 'unsupported_action',
