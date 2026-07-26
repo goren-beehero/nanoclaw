@@ -48,4 +48,34 @@ describe('update_google_document tool', () => {
     expect(response.isError).toBe(true);
     expect((getOutboundDb().prepare('SELECT COUNT(*) AS n FROM messages_out').get() as { n: number }).n).toBe(0);
   });
+
+  it('returns the host permission denial without rewriting it', async () => {
+    setCurrentActionSource('slack-message-other');
+    const pending = updateGoogleDocument.handler({
+      document_id: 'doc_1234567890',
+      requests: [{ insertText: { location: { index: 1 }, text: 'Denied' } }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const outbound = getOutboundDb().prepare("SELECT * FROM messages_out WHERE kind = 'system'").get() as {
+      id: string;
+    };
+    const denial =
+      "You don't have permission to edit Google Docs through Bobi. Ask <@U-OWNER> to send the edit instruction.";
+    getInboundDb()
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, content)
+         VALUES (?, 2, 'system', ?, 'pending', ?)`,
+      )
+      .run(
+        `response-${outbound.id}`,
+        new Date().toISOString(),
+        JSON.stringify({ questionId: outbound.id, ok: false, message: denial }),
+      );
+
+    expect(await pending).toEqual({
+      content: [{ type: 'text', text: denial }],
+      isError: true,
+    });
+  });
 });

@@ -6,6 +6,12 @@ interface AuthorizedTurn {
   recordedAt: number;
 }
 
+type DenialCode = 'missing_turn' | 'expired_turn' | 'stale_message' | 'unauthorized_sender';
+
+type TurnAuthorization =
+  | { allowed: true; userId: string }
+  | { allowed: false; code: DenialCode; reason: string };
+
 const currentTurns = new Map<string, AuthorizedTurn>();
 
 /** Record the newest engaged inbound message for a session. Host process only. */
@@ -21,20 +27,38 @@ export function consumeGoogleDocsWriteTurn(
   sessionId: string,
   sourceMessageId: string,
   allowedUsers: ReadonlySet<string>,
-): { allowed: true; userId: string } | { allowed: false; reason: string } {
+): TurnAuthorization {
   const turn = currentTurns.get(sessionId);
-  if (!turn) return { allowed: false, reason: 'no active user turn is authorized for document writes' };
+  if (!turn) {
+    return {
+      allowed: false,
+      code: 'missing_turn',
+      reason: 'no active user turn is authorized for document writes',
+    };
+  }
 
   const age = Date.now() - turn.recordedAt;
   if (!Number.isFinite(age) || age > TURN_MAX_AGE_MS) {
     currentTurns.delete(sessionId);
-    return { allowed: false, reason: 'the document-write authorization expired; ask again in a new message' };
+    return {
+      allowed: false,
+      code: 'expired_turn',
+      reason: 'the document-write authorization expired; ask again in a new message',
+    };
   }
   if (turn.sourceMessageId !== sourceMessageId) {
-    return { allowed: false, reason: 'the write request is not tied to the newest inbound message' };
+    return {
+      allowed: false,
+      code: 'stale_message',
+      reason: 'the write request is not tied to the newest inbound message',
+    };
   }
   if (!turn.userId || !allowedUsers.has(turn.userId)) {
-    return { allowed: false, reason: 'the Slack sender is not authorized to modify Google Docs' };
+    return {
+      allowed: false,
+      code: 'unauthorized_sender',
+      reason: 'the Slack sender is not authorized to modify Google Docs',
+    };
   }
 
   currentTurns.delete(sessionId);
