@@ -118,7 +118,13 @@ describe('Google Docs write delivery action', () => {
     );
 
     expect(executed).toBe(false);
-    expect(responses).toEqual([{ ok: false, message: expect.stringContaining('not authorized') }]);
+    expect(responses).toEqual([
+      {
+        ok: false,
+        message:
+          "You don't have permission to edit Google Docs through Bobi. Ask <@U-OWNER> to send the edit instruction.",
+      },
+    ]);
     db.close();
   });
 

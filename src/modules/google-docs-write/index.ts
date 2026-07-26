@@ -75,7 +75,20 @@ export async function handleGoogleDocsWrite(
     }
 
     const grant = consumeGoogleDocsWriteTurn(session.id, sourceMessageId, policy.allowedUsers);
-    if (!grant.allowed) throw new Error(grant.reason);
+    if (!grant.allowed) {
+      if (grant.code === 'unauthorized_sender') {
+        const message = unauthorizedSenderMessage(policy.allowedUsers);
+        deps.respond(session, questionId, false, message);
+        log.warn('Google Docs update rejected', {
+          sessionId: session.id,
+          agentGroupId: session.agent_group_id,
+          questionId,
+          reason: grant.code,
+        });
+        return;
+      }
+      throw new Error(grant.reason);
+    }
     if (senderIdentity(source.content, source.channel_type) !== grant.userId) {
       throw new Error('the stored Slack sender does not match the authorized turn');
     }
@@ -142,6 +155,14 @@ function senderIdentity(rawContent: string, channelType: string): string | null 
   } catch {
     return null;
   }
+}
+
+function unauthorizedSenderMessage(allowedUsers: ReadonlySet<string>): string {
+  const owners = [...allowedUsers]
+    .filter((userId) => userId.startsWith('slack:'))
+    .map((userId) => `<@${userId.slice('slack:'.length)}>`);
+  const ownerLabel = owners.length > 0 ? owners.join(' or ') : 'the authorized document owner';
+  return `You don't have permission to edit Google Docs through Bobi. Ask ${ownerLabel} to send the edit instruction.`;
 }
 
 registerDeliveryAction(

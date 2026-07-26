@@ -28,10 +28,12 @@ describe('Google Docs write turn authorization', () => {
     recordGoogleDocsWriteTurn('sess-1', 'msg-other', 'slack:U-OTHER');
     expect(consumeGoogleDocsWriteTurn('sess-1', 'msg-owner', allowed)).toMatchObject({
       allowed: false,
+      code: 'stale_message',
       reason: expect.stringContaining('newest'),
     });
     expect(consumeGoogleDocsWriteTurn('sess-1', 'msg-other', allowed)).toMatchObject({
       allowed: false,
+      code: 'unauthorized_sender',
       reason: expect.stringContaining('not authorized'),
     });
   });
@@ -43,6 +45,7 @@ describe('Google Docs write turn authorization', () => {
     vi.advanceTimersByTime(31 * 60 * 1000);
     expect(consumeGoogleDocsWriteTurn('sess-1', 'msg-owner', allowed)).toMatchObject({
       allowed: false,
+      code: 'expired_turn',
       reason: expect.stringContaining('expired'),
     });
   });
