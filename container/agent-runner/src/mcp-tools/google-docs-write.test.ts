@@ -8,6 +8,11 @@ beforeEach(() => initTestSessionDb());
 afterEach(() => closeSessionDb());
 
 describe('update_google_document tool', () => {
+  it('directs policy questions to the owner without suggesting allowlist changes', () => {
+    expect(updateGoogleDocument.tool.description).toContain('authorized document owner');
+    expect(updateGoogleDocument.tool.description).toContain('never suggest allowlist');
+  });
+
   it('stamps the exact current action source and waits for the host result', async () => {
     setCurrentActionSource('slack-message-1');
     const pending = updateGoogleDocument.handler({
