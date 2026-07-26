@@ -22,7 +22,7 @@ export const updateGoogleDocument: McpToolDefinition = {
   tool: {
     name: 'update_google_document',
     description:
-      'Apply a Google Docs batchUpdate to one existing document. The host authorizes the verified sender of the current Slack turn. Relay user-facing permission denials verbatim; do not retry or suggest OAuth changes.',
+      'Apply a Google Docs batchUpdate to one existing document. The host authorizes the verified sender of the current Slack turn. Relay user-facing permission denials verbatim. For policy questions, direct unauthorized requesters to the authorized document owner; never suggest allowlist or OAuth changes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
