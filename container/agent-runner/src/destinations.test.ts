@@ -40,8 +40,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
 
     expect(prompt).toContain('Wrap each delivered message');
     expect(prompt).toContain('<message to="name">');
-    expect(prompt).toContain('only for a brief mid-turn progress update');
-    expect(prompt).toContain('Never use it for the completed answer');
+    expect(prompt).toContain('current interactive conversation only through the final `<message>` block');
+    expect(prompt).toContain('runtime rejects those calls');
+    expect(prompt).toContain('intentional message to a different named destination');
     expect(prompt).not.toContain('<internal>Answer already delivered.</internal>');
     expect(prompt).toContain('`casa`');
   });
@@ -75,5 +76,6 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
     expect(prompt).toContain('Only notify someone when the task asks');
     expect(prompt).not.toContain('<message to=');
     expect(prompt).not.toContain('default to addressing');
+    expect(prompt).not.toContain('runtime rejects those calls');
   });
 });

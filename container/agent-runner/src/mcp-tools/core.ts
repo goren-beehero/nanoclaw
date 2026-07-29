@@ -10,8 +10,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { findByName, getAllDestinations } from '../destinations.js';
+import { openInboundDb } from '../db/connection.js';
 import { getMessageIdBySeq, getRoutingBySeq, writeMessageOut } from '../db/messages-out.js';
-import { getCurrentInReplyTo } from '../db/session-state.js';
+import { getCurrentActionSource, getCurrentInReplyTo } from '../db/session-state.js';
 import { getSessionRouting } from '../db/session-routing.js';
 import { registerTools } from './server.js';
 import type { McpToolDefinition } from './types.js';
@@ -67,11 +68,39 @@ function resolveRouting(
   return { channel_type: 'agent', platform_id: dest.agentGroupId!, thread_id: null, resolvedName: to };
 }
 
+/**
+ * Interactive replies to the conversation currently being processed have one
+ * delivery path: the final <message> block. Task runs have no chat action
+ * source, and missing/stale source context deliberately fails open.
+ */
+function isCurrentInteractiveConversation(routing: { channel_type: string; platform_id: string }): boolean {
+  const sourceId = getCurrentActionSource();
+  if (!sourceId) return false;
+
+  try {
+    const db = openInboundDb();
+    try {
+      const source = db
+        .prepare('SELECT kind, channel_type, platform_id FROM messages_in WHERE id = ?')
+        .get(sourceId) as
+        | { kind: string; channel_type: string | null; platform_id: string | null }
+        | undefined;
+      if (!source || (source.kind !== 'chat' && source.kind !== 'chat-sdk')) return false;
+      return source.channel_type === routing.channel_type && source.platform_id === routing.platform_id;
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    log(`send_message source check failed open: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
 export const sendMessage: McpToolDefinition = {
   tool: {
     name: 'send_message',
     description:
-      'Send a brief progress update to a named destination while work continues. Do not use for the completed answer to the current conversation.',
+      'Send a message from an isolated task run or to a destination other than the current interactive conversation. Reply to the current conversation only through the final <message> block.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -92,6 +121,11 @@ export const sendMessage: McpToolDefinition = {
 
     const routing = resolveRouting(to);
     if ('error' in routing) return err(routing.error);
+    if (isCurrentInteractiveConversation(routing)) {
+      return err(
+        'Nothing was sent. Interactive replies to the current conversation are delivered only through the final <message> block. Put this content in your final response.',
+      );
+    }
 
     const id = generateId();
     const seq = writeMessageOut({

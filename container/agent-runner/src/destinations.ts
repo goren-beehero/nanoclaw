@@ -136,11 +136,11 @@ function buildDestinationsSection(mode: SessionMode): string {
   );
   lines.push('');
   lines.push(
-    'The `send_message` MCP tool is only for a brief mid-turn progress update while work continues. Never use it for the completed answer. Always pass its explicit `to` destination. Each `send_message` call and each final-response `<message>` block lands as its own message in the conversation, so they read as a sequence rather than as one combined reply.',
+    'Reply to the current interactive conversation only through the final `<message>` block. Do not call `send_message` for acknowledgments, progress updates, clarifying questions, or completed answers to that same conversation; the runtime rejects those calls so one turn has one delivery path. `send_message` remains available for an intentional message to a different named destination.',
   );
   lines.push('');
   lines.push(
-    'For a short turn, do not narrate. For longer work, send one acknowledgment and then updates only at meaningful milestones, especially before slow operations. Never narrate micro-steps. Deliver the completed answer exactly once in the final `<message>` block, and never emit delivery-status text such as "answer already delivered".',
+    'For a short turn, do not narrate. For longer work, the platform typing indicator shows that work is continuing; do not emit chat progress narration. Deliver the completed answer or clarifying question exactly once in the final `<message>` block, and never emit delivery-status text such as "answer already delivered".',
   );
   return lines.join('\n');
 }
