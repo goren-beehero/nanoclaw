@@ -47,7 +47,10 @@ interface ActionSourceRouting {
 }
 
 function getActionSourceRouting(): ActionSourceRouting | null {
-  const sourceId = getCurrentActionSource();
+  // Interactive turns publish an exact action source for authorization.
+  // Task turns deliberately do not, so fall back to the batch reply source:
+  // it is the task occurrence row and carries the captured Slack thread.
+  const sourceId = getCurrentActionSource() ?? getCurrentInReplyTo();
   if (!sourceId) return null;
   try {
     const db = openInboundDb();

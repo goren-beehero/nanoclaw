@@ -136,7 +136,7 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
 
   it('allows task delivery to the session destination', async () => {
     seedInboundMessage('task-source', 'task', 'slack', 'C-CURRENT', 'thread-task-origin');
-    publishCurrentActionSource('task-source');
+    publishInReplyTo('task-source');
 
     await sendMessage.handler({ to: 'current', text: 'Scheduled result' });
 
@@ -148,7 +148,7 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
 
   it('preserves a captured channel-root task route instead of falling back to session routing', async () => {
     seedInboundMessage('task-source', 'task', 'slack', 'C-CURRENT', null);
-    publishCurrentActionSource('task-source');
+    publishInReplyTo('task-source');
 
     await sendMessage.handler({ to: 'current', text: 'Scheduled root result' });
 
