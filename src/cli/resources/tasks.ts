@@ -142,7 +142,8 @@ function selectLiveTasks(db: Database.Database, status?: TaskStatus): TaskRow[] 
   const statusSql = status ? 'status = ?' : "status IN ('pending', 'paused')";
   return db
     .prepare(
-      `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, MAX(seq) AS seq
+      `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, MAX(seq) AS seq,
+              platform_id, channel_type, thread_id
          FROM messages_in
         WHERE kind = 'task'
           AND ${statusSql}
@@ -155,7 +156,8 @@ function selectLiveTasks(db: Database.Database, status?: TaskStatus): TaskRow[] 
 function selectTask(db: Database.Database, id: string): TaskRow | undefined {
   return db
     .prepare(
-      `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, seq
+      `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, seq,
+              platform_id, channel_type, thread_id
          FROM messages_in
         WHERE kind = 'task'
           AND (id = ? OR series_id = ?)
@@ -397,6 +399,9 @@ function runTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
         processAfter: new Date().toISOString(),
         recurrence: null,
         content: row.content,
+        platformId: row.platform_id,
+        channelType: row.channel_type,
+        threadId: row.thread_id,
       });
       return { series_id: seriesKey, row_id: rowId, status: 'pending' };
     });

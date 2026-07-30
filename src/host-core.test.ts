@@ -19,6 +19,7 @@ import {
 } from './db/index.js';
 import {
   resolveSession,
+  resolveTaskSession,
   writeSessionMessage,
   writeSessionRouting,
   initSessionFolder,
@@ -1310,6 +1311,64 @@ describe('writeSessionRouting', () => {
     expect(row!.channel_type).toBe('discord');
     expect(row!.platform_id).toBe('chan-123');
     expect(row!.thread_id).toBe('thread-77');
+  });
+
+  it('hydrates a legacy isolated task from its creator without changing the task session identity', () => {
+    createAgentGroup({
+      id: 'ag-1',
+      name: 'Agent',
+      folder: 'agent',
+      agent_provider: null,
+      created_at: now(),
+    });
+    createMessagingGroup({
+      id: 'mg-1',
+      channel_type: 'slack',
+      platform_id: 'C012345',
+      name: 'bobi-testing',
+      is_group: 1,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+
+    const { session: origin } = resolveSession('ag-1', 'mg-1', '1234.5678', 'per-thread');
+    const { session: task } = resolveTaskSession('ag-1', 'legacy-series');
+    writeSessionMessage('ag-1', task.id, {
+      id: 'legacy-task',
+      kind: 'task',
+      timestamp: now(),
+      content: JSON.stringify({ prompt: 'send a briefing', originSessionId: origin.id }),
+    });
+
+    writeSessionRouting('ag-1', task.id);
+
+    const db = new Database(inboundDbPath('ag-1', task.id));
+    const taskRow = db
+      .prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE id = ?')
+      .get('legacy-task') as {
+      channel_type: string | null;
+      platform_id: string | null;
+      thread_id: string | null;
+    };
+    const sessionRoute = db
+      .prepare('SELECT channel_type, platform_id, thread_id FROM session_routing WHERE id = 1')
+      .get() as {
+      channel_type: string | null;
+      platform_id: string | null;
+      thread_id: string | null;
+    };
+    db.close();
+
+    expect(taskRow).toEqual({
+      channel_type: 'slack',
+      platform_id: 'C012345',
+      thread_id: '1234.5678',
+    });
+    expect(sessionRoute).toEqual({
+      channel_type: null,
+      platform_id: null,
+      thread_id: 'system:tasks:legacy-series',
+    });
   });
 });
 

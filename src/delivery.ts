@@ -13,6 +13,7 @@ import {
   getRunningSessions,
   getActiveSessions,
   createPendingQuestion,
+  getSession,
   isTaskThread,
   TASKS_SYSTEM_THREAD_ID,
 } from './db/sessions.js';
@@ -49,6 +50,67 @@ function requiresOriginChannel(agentGroupId: string): boolean {
     .map((value) => value.trim())
     .filter(Boolean)
     .includes(agentGroupId);
+}
+
+function getCapturedTaskOriginMessagingGroup(
+  msg: {
+    platform_id: string | null;
+    channel_type: string | null;
+    thread_id: string | null;
+    in_reply_to: string | null;
+  },
+  session: Session,
+  inDb: Database.Database,
+) {
+  if (session.messaging_group_id !== null || !isTaskThread(session.thread_id) || !msg.in_reply_to) return undefined;
+  const source = inDb
+    .prepare(
+      `SELECT kind, platform_id, channel_type, thread_id, content
+         FROM messages_in
+        WHERE id = ?`,
+    )
+    .get(msg.in_reply_to) as
+    | {
+        kind: string;
+        platform_id: string | null;
+        channel_type: string | null;
+        thread_id: string | null;
+        content: string;
+      }
+    | undefined;
+  if (
+    !source ||
+    source.kind !== 'task' ||
+    source.platform_id !== msg.platform_id ||
+    source.channel_type !== msg.channel_type ||
+    source.thread_id !== msg.thread_id
+  ) {
+    return undefined;
+  }
+
+  let originSessionId: string | null = null;
+  try {
+    const content = JSON.parse(source.content) as { originSessionId?: unknown };
+    originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
+  } catch {
+    return undefined;
+  }
+  if (!originSessionId) return undefined;
+
+  const originSession = getSession(originSessionId);
+  if (!originSession || originSession.agent_group_id !== session.agent_group_id || !originSession.messaging_group_id) {
+    return undefined;
+  }
+  const originMg = getMessagingGroup(originSession.messaging_group_id);
+  if (
+    !originMg ||
+    originMg.channel_type !== source.channel_type ||
+    originMg.platform_id !== source.platform_id ||
+    originSession.thread_id !== source.thread_id
+  ) {
+    return undefined;
+  }
+  return originMg;
 }
 
 /**
@@ -331,7 +393,9 @@ async function deliverMessage(
     // sibling instances share the same (channel_type, platform_id) — so the
     // reply goes out through the instance the message came in on. Otherwise
     // fall back to the by-platform lookup (default-instance-first).
-    const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+    const directOriginMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+    const taskOriginMg = directOriginMg ? undefined : getCapturedTaskOriginMessagingGroup(msg, session, inDb);
+    const originMg = directOriginMg ?? taskOriginMg;
     const mg =
       originMg && originMg.channel_type === msg.channel_type && originMg.platform_id === msg.platform_id
         ? originMg
@@ -339,7 +403,7 @@ async function deliverMessage(
     if (!mg) {
       throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
     }
-    const isOriginChat = session.messaging_group_id === mg.id;
+    const isOriginChat = session.messaging_group_id === mg.id || taskOriginMg?.id === mg.id;
     if (!isOriginChat && requiresOriginChannel(session.agent_group_id)) {
       throw new Error(
         `cross-channel delivery blocked for ${session.agent_group_id}: session ${session.id} originated in ` +

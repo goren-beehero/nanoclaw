@@ -4,7 +4,7 @@ import fs from 'fs';
 import { CronExpressionParser } from 'cron-parser';
 
 import { TIMEZONE } from '../../config.js';
-import { inboundDbPath, resolveTaskSession, withInboundDb } from '../../session-manager.js';
+import { inboundDbPath, resolveTaskOriginRouting, resolveTaskSession, withInboundDb } from '../../session-manager.js';
 import { parseZonedToUtc } from '../../timezone.js';
 import { insertTaskRow } from './db.js';
 
@@ -42,6 +42,9 @@ export interface ScheduledTaskRow {
   timestamp: string;
   tries: number;
   seq: number;
+  platform_id: string | null;
+  channel_type: string | null;
+  thread_id: string | null;
 }
 
 /**
@@ -130,6 +133,7 @@ export function createScheduledTask(
 ): { session: { id: string; agent_group_id: string }; row: ScheduledTaskRow } {
   const id = makeTaskId(task.name);
   const { session } = resolveTaskSession(agentGroupId, id);
+  const originRouting = resolveTaskOriginRouting(agentGroupId, options?.originSessionId ?? null);
 
   if (!fs.existsSync(inboundDbPath(agentGroupId, session.id))) {
     throw new Error('task system session inbound.db not found');
@@ -146,10 +150,14 @@ export function createScheduledTask(
         originSessionId: options?.originSessionId ?? null,
       }),
       status: options?.status ?? 'pending',
+      platformId: originRouting?.platformId ?? null,
+      channelType: originRouting?.channelType ?? null,
+      threadId: originRouting?.threadId ?? null,
     });
     return db
       .prepare(
-        `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, seq
+        `SELECT id AS row_id, series_id, status, process_after, recurrence, content, timestamp, tries, seq,
+                platform_id, channel_type, thread_id
            FROM messages_in WHERE id = ?`,
       )
       .get(id) as ScheduledTaskRow;

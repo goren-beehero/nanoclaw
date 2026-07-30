@@ -69,6 +69,9 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
       content: JSON.stringify({ prompt: 'noop' }),
       recurrence: '0 9 * * *',
       series_id: 'task-orig',
+      platform_id: null,
+      channel_type: null,
+      thread_id: null,
     };
     insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
   }
@@ -223,6 +226,9 @@ describe('updateTask', () => {
       content: JSON.stringify({ prompt: 'old' }),
       recurrence: '0 9 * * *',
       series_id: 'task-orig',
+      platform_id: null,
+      channel_type: null,
+      thread_id: null,
     };
     insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
 
@@ -265,6 +271,9 @@ describe('insertRecurrence', () => {
       content: '{}',
       recurrence: '0 9 * * *',
       series_id: 'task-orig',
+      platform_id: null,
+      channel_type: null,
+      thread_id: null,
     };
     insertRecurrence(db, msg, 'task-next', new Date().toISOString());
 
@@ -272,6 +281,35 @@ describe('insertRecurrence', () => {
       series_id: string;
     };
     expect(row.series_id).toBe('task-orig');
+    db.close();
+  });
+
+  it('copies the captured origin route forward', () => {
+    const db = freshDb();
+    const msg: RecurringMessage = {
+      id: 'task-orig',
+      content: '{}',
+      recurrence: '0 9 * * *',
+      series_id: 'task-orig',
+      platform_id: 'C012345',
+      channel_type: 'slack',
+      thread_id: '1234.5678',
+    };
+
+    insertRecurrence(db, msg, 'task-next', new Date().toISOString());
+
+    const row = db
+      .prepare('SELECT platform_id, channel_type, thread_id FROM messages_in WHERE id = ?')
+      .get('task-next') as {
+      platform_id: string | null;
+      channel_type: string | null;
+      thread_id: string | null;
+    };
+    expect(row).toEqual({
+      platform_id: 'C012345',
+      channel_type: 'slack',
+      thread_id: '1234.5678',
+    });
     db.close();
   });
 });
