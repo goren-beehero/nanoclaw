@@ -39,6 +39,33 @@ function destinationList(): string {
   return all.map((d) => d.name).join(', ');
 }
 
+interface ActionSourceRouting {
+  kind: string;
+  channel_type: string | null;
+  platform_id: string | null;
+  thread_id: string | null;
+}
+
+function getActionSourceRouting(): ActionSourceRouting | null {
+  const sourceId = getCurrentActionSource();
+  if (!sourceId) return null;
+  try {
+    const db = openInboundDb();
+    try {
+      return (
+        (db.prepare('SELECT kind, channel_type, platform_id, thread_id FROM messages_in WHERE id = ?').get(sourceId) as
+          | ActionSourceRouting
+          | undefined) ?? null
+      );
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    log(`action source routing lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 /**
  * Resolve a destination name to routing fields.
  *
@@ -54,10 +81,18 @@ function resolveRouting(
   if (!dest) return { error: `Unknown destination "${to}". Known: ${destinationList()}` };
   if (dest.type === 'channel') {
     // If the destination is the same channel the session is bound to,
-    // preserve the thread_id so replies land in the correct thread.
+    // preserve the thread_id so replies land in the correct thread. Isolated
+    // task sessions keep their canonical system thread in session_routing, so
+    // their user-facing reply thread comes from the active task occurrence.
     const session = getSessionRouting();
-    const threadId =
-      session.channel_type === dest.channelType && session.platform_id === dest.platformId ? session.thread_id : null;
+    const source = getActionSourceRouting();
+    const isTaskSourceDestination =
+      source?.kind === 'task' && source.channel_type === dest.channelType && source.platform_id === dest.platformId;
+    const threadId = isTaskSourceDestination
+      ? source.thread_id
+      : session.channel_type === dest.channelType && session.platform_id === dest.platformId
+        ? session.thread_id
+        : null;
     return {
       channel_type: dest.channelType!,
       platform_id: dest.platformId!,
@@ -74,26 +109,9 @@ function resolveRouting(
  * source, and missing/stale source context deliberately fails open.
  */
 function isCurrentInteractiveConversation(routing: { channel_type: string; platform_id: string }): boolean {
-  const sourceId = getCurrentActionSource();
-  if (!sourceId) return false;
-
-  try {
-    const db = openInboundDb();
-    try {
-      const source = db
-        .prepare('SELECT kind, channel_type, platform_id FROM messages_in WHERE id = ?')
-        .get(sourceId) as
-        | { kind: string; channel_type: string | null; platform_id: string | null }
-        | undefined;
-      if (!source || (source.kind !== 'chat' && source.kind !== 'chat-sdk')) return false;
-      return source.channel_type === routing.channel_type && source.platform_id === routing.platform_id;
-    } finally {
-      db.close();
-    }
-  } catch (error) {
-    log(`send_message source check failed open: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
+  const source = getActionSourceRouting();
+  if (!source || (source.kind !== 'chat' && source.kind !== 'chat-sdk')) return false;
+  return source.channel_type === routing.channel_type && source.platform_id === routing.platform_id;
 }
 
 export const sendMessage: McpToolDefinition = {

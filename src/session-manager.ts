@@ -26,6 +26,7 @@ import {
   findSessionByAgentGroup,
   findSessionForAgent,
   getSession,
+  isTaskThread,
   taskThreadId,
   updateSession,
 } from './db/sessions.js';
@@ -149,6 +150,69 @@ export function resolveTaskSession(agentGroupId: string, seriesId: string): { se
   return { session, created: true };
 }
 
+export interface TaskOriginRouting {
+  platformId: string;
+  channelType: string;
+  threadId: string | null;
+}
+
+/** Resolve a task creator back to its exact channel/thread, if it came from one. */
+export function resolveTaskOriginRouting(
+  agentGroupId: string,
+  originSessionId: string | null,
+): TaskOriginRouting | null {
+  if (!originSessionId) return null;
+  const origin = getSession(originSessionId);
+  if (!origin || origin.agent_group_id !== agentGroupId || !origin.messaging_group_id) return null;
+  const messagingGroup = getMessagingGroup(origin.messaging_group_id);
+  if (!messagingGroup) return null;
+  return {
+    platformId: messagingGroup.platform_id,
+    channelType: messagingGroup.channel_type,
+    threadId: origin.thread_id,
+  };
+}
+
+/**
+ * Existing isolated tasks may predate persisted origin routing. Hydrate them
+ * from originSessionId before the container starts so old live series regain
+ * the same reply route as newly created tasks.
+ */
+function hydrateTaskOriginRouting(db: Database.Database, session: Session): number {
+  if (!isTaskThread(session.thread_id)) return 0;
+  const rows = db
+    .prepare(
+      `SELECT id, content
+         FROM messages_in
+        WHERE kind = 'task'
+          AND (platform_id IS NULL OR channel_type IS NULL)`,
+    )
+    .all() as Array<{ id: string; content: string }>;
+  const update = db.prepare(
+    `UPDATE messages_in
+        SET platform_id = ?, channel_type = ?, thread_id = ?
+      WHERE id = ?`,
+  );
+  let hydrated = 0;
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      let originSessionId: string | null = null;
+      try {
+        const content = JSON.parse(row.content) as { originSessionId?: unknown };
+        originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
+      } catch {
+        continue;
+      }
+      const routing = resolveTaskOriginRouting(session.agent_group_id, originSessionId);
+      if (!routing) continue;
+      update.run(routing.platformId, routing.channelType, routing.threadId, row.id);
+      hydrated++;
+    }
+  });
+  tx();
+  return hydrated;
+}
+
 /** Create the session folder and initialize both DBs. */
 export function initSessionFolder(agentGroupId: string, sessionId: string): void {
   const dir = sessionDir(agentGroupId, sessionId);
@@ -189,6 +253,10 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
 
   const db = openInboundDb(agentGroupId, sessionId);
   try {
+    const hydrated = hydrateTaskOriginRouting(db, session);
+    if (hydrated > 0) {
+      log.info('Task origin routing hydrated', { sessionId, hydrated });
+    }
     upsertSessionRouting(db, {
       channel_type: channelType,
       platform_id: platformId,

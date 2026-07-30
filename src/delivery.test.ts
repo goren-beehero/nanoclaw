@@ -71,6 +71,49 @@ function insertOutbound(agentGroupId: string, sessionId: string, msgId: string):
   db.close();
 }
 
+function insertTaskOccurrence(
+  sessionId: string,
+  taskId: string,
+  originSessionId: string | null,
+  route: { channelType: string | null; platformId: string | null; threadId: string | null },
+): void {
+  const db = openInboundDb('ag-1', sessionId);
+  db.prepare(
+    `INSERT INTO messages_in
+       (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, trigger)
+     VALUES (?, 2, 'task', datetime('now'), 'pending', ?, ?, ?, ?, 1)`,
+  ).run(
+    taskId,
+    route.platformId,
+    route.channelType,
+    route.threadId,
+    JSON.stringify({ prompt: 'scheduled check', originSessionId }),
+  );
+  db.close();
+}
+
+function insertTaskOutbound(
+  sessionId: string,
+  msgId: string,
+  taskId: string,
+  route: { channelType: string; platformId: string; threadId: string | null },
+): void {
+  const db = new Database(outboundDbPath('ag-1', sessionId));
+  db.prepare(
+    `INSERT INTO messages_out
+       (id, timestamp, kind, platform_id, channel_type, thread_id, in_reply_to, content)
+     VALUES (?, datetime('now'), 'chat', ?, ?, ?, ?, ?)`,
+  ).run(
+    msgId,
+    route.platformId,
+    route.channelType,
+    route.threadId,
+    taskId,
+    JSON.stringify({ text: 'scheduled result' }),
+  );
+  db.close();
+}
+
 beforeEach(() => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
@@ -327,6 +370,144 @@ describe('deliverSessionMessages — instance resolution', () => {
 });
 
 describe('deliverSessionMessages — permission check', () => {
+  it('allows a channel-local task only to its captured Slack thread', async () => {
+    seedAgentAndChannel();
+    const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
+    const { session: task } = resolveTaskSession('ag-1', 'daily-check');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-origin' };
+    insertTaskOccurrence(task.id, 'task-source', origin.id, route);
+    insertTaskOutbound(task.id, 'out-task', 'task-source', route);
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    const calls: Array<{ platformId: string; threadId: string | null }> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, platformId, threadId) {
+        calls.push({ platformId, threadId });
+        return 'plat-task';
+      },
+    });
+
+    await deliverSessionMessages(task);
+
+    expect(calls).toEqual([{ platformId: 'telegram:123', threadId: 'thread-origin' }]);
+  });
+
+  it('blocks a channel-local task when its outbound thread differs from the captured origin', async () => {
+    seedAgentAndChannel();
+    const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
+    const { session: task } = resolveTaskSession('ag-1', 'daily-check');
+    insertTaskOccurrence(task.id, 'task-source', origin.id, {
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+      threadId: 'thread-origin',
+    });
+    insertTaskOutbound(task.id, 'out-task-wrong-thread', 'task-source', {
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+      threadId: 'thread-other',
+    });
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    let calls = 0;
+    setDeliveryAdapter({
+      async deliver() {
+        calls++;
+        return 'must-not-send';
+      },
+    });
+
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+
+    expect(calls).toBe(0);
+    const db = openInboundDb('ag-1', task.id);
+    expect(getDeliveredIds(db).has('out-task-wrong-thread')).toBe(true);
+    db.close();
+  });
+
+  it('blocks a channel-local task from sending to a different wired channel', async () => {
+    seedAgentAndChannel();
+    createMessagingGroup({
+      id: 'mg-2',
+      channel_type: 'telegram',
+      platform_id: 'telegram:456',
+      name: 'Other Chat',
+      is_group: 1,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-other',
+      messaging_group_id: 'mg-2',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'per-thread',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
+    const { session: task } = resolveTaskSession('ag-1', 'daily-check');
+    insertTaskOccurrence(task.id, 'task-source', origin.id, {
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+      threadId: 'thread-origin',
+    });
+    insertTaskOutbound(task.id, 'out-task-other-channel', 'task-source', {
+      channelType: 'telegram',
+      platformId: 'telegram:456',
+      threadId: null,
+    });
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    let calls = 0;
+    setDeliveryAdapter({
+      async deliver() {
+        calls++;
+        return 'must-not-send';
+      },
+    });
+
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+
+    expect(calls).toBe(0);
+  });
+
+  it('blocks a channel-local task with no captured chat origin', async () => {
+    seedAgentAndChannel();
+    const { session: task } = resolveTaskSession('ag-1', 'cli-check');
+    insertTaskOccurrence(task.id, 'task-source', null, {
+      channelType: null,
+      platformId: null,
+      threadId: null,
+    });
+    insertTaskOutbound(task.id, 'out-cli-task', 'task-source', {
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+      threadId: null,
+    });
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    let calls = 0;
+    setDeliveryAdapter({
+      async deliver() {
+        calls++;
+        return 'must-not-send';
+      },
+    });
+
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+
+    expect(calls).toBe(0);
+  });
+
   it('blocks an authorized cross-channel send for channel-local agents', async () => {
     seedAgentAndChannel();
     createMessagingGroupAgent({

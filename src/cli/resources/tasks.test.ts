@@ -21,7 +21,7 @@ vi.mock('../../container-runner.js', () => ({
 
 const TEST_DIR = '/tmp/nanoclaw-test-cli-tasks';
 
-import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
+import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from '../../db/index.js';
 import { createSession, findSessionByAgentGroup, getSessionsByAgentGroup, taskThreadId } from '../../db/sessions.js';
 import { countDueMessages } from '../../db/session-db.js';
 import { inboundDbPath, initSessionFolder } from '../../session-manager.js';
@@ -45,6 +45,30 @@ function createChatSession(group: string, id: string): void {
     agent_group_id: group,
     messaging_group_id: null,
     thread_id: null,
+    agent_provider: null,
+    status: 'active',
+    container_status: 'stopped',
+    last_active: null,
+    created_at: now(),
+  });
+  initSessionFolder(group, id);
+}
+
+function createRoutedChatSession(group: string, id: string): void {
+  createMessagingGroup({
+    id: 'mg-route',
+    channel_type: 'slack',
+    platform_id: 'C012345',
+    name: 'bobi-testing',
+    is_group: 1,
+    unknown_sender_policy: 'public',
+    created_at: now(),
+  });
+  createSession({
+    id,
+    agent_group_id: group,
+    messaging_group_id: 'mg-route',
+    thread_id: '1234.5678',
     agent_provider: null,
     status: 'active',
     container_status: 'stopped',
@@ -109,6 +133,38 @@ describe('tasks CLI resource', () => {
     expect(content.prompt).toBe('send a briefing');
     expect(content.prompt).not.toContain('Task delivery contract');
     systemDb.close();
+  });
+
+  it('captures the exact Slack channel and thread from the creating session', async () => {
+    createRoutedChatSession('ag-1', 'chat-route');
+
+    const resp = await dispatch(
+      {
+        id: 'req-route',
+        command: 'tasks-create',
+        args: { prompt: 'send a briefing', process_after: '2026-01-15T09:00:00Z' },
+      },
+      agentCtx('ag-1', 'chat-route'),
+    );
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) return;
+    const created = resp.data as { session_id: string };
+    const db = new Database(inboundDbPath('ag-1', created.session_id), { readonly: true });
+    const row = db
+      .prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE kind = ?')
+      .get('task') as {
+      channel_type: string | null;
+      platform_id: string | null;
+      thread_id: string | null;
+    };
+    db.close();
+
+    expect(row).toEqual({
+      channel_type: 'slack',
+      platform_id: 'C012345',
+      thread_id: '1234.5678',
+    });
   });
 
   it('tasks-list attaches a server-rendered human table (so the container agent gets it too)', async () => {
@@ -333,6 +389,42 @@ describe('tasks CLI resource', () => {
     const runRow = pending.find((p) => p.id === fired.row_id);
     expect(runRow?.recurrence).toBeNull(); // never re-armed into a phantom series
     expect(new Date(runRow!.process_after).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('run preserves the captured channel and thread on the immediate occurrence', async () => {
+    createRoutedChatSession('ag-1', 'chat-route');
+    const created = await dispatch(
+      {
+        id: 'c-route',
+        command: 'tasks-create',
+        args: { prompt: 'x', name: 'routed', process_after: '2999-01-01T00:00:00Z' },
+      },
+      agentCtx('ag-1', 'chat-route'),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { series_id, session_id } = created.data as { series_id: string; session_id: string };
+
+    const run = await dispatch(
+      { id: 'r-route', command: 'tasks-run', args: { id: series_id } },
+      agentCtx('ag-1', 'chat-route'),
+    );
+    expect(run.ok).toBe(true);
+    if (!run.ok) return;
+    const { row_id } = run.data as { row_id: string };
+
+    const db = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    const row = db.prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE id = ?').get(row_id) as {
+      channel_type: string | null;
+      platform_id: string | null;
+      thread_id: string | null;
+    };
+    db.close();
+    expect(row).toEqual({
+      channel_type: 'slack',
+      platform_id: 'C012345',
+      thread_id: '1234.5678',
+    });
   });
 
   it('task object exposes origin_session_id and created_at', async () => {

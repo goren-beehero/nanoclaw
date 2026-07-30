@@ -41,14 +41,15 @@ function seedInboundMessage(
   kind: 'chat' | 'chat-sdk' | 'task',
   channelType: string,
   platformId: string,
+  threadId: string | null = null,
 ): void {
   getInboundDb()
     .prepare(
       `INSERT INTO messages_in
-       (id, seq, kind, timestamp, trigger, channel_type, platform_id, content)
-       VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages_in), ?, ?, 1, ?, ?, ?)`,
+       (id, seq, kind, timestamp, trigger, channel_type, platform_id, thread_id, content)
+       VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages_in), ?, ?, 1, ?, ?, ?, ?)`,
     )
-    .run(id, kind, new Date().toISOString(), channelType, platformId, JSON.stringify({ text: 'request' }));
+    .run(id, kind, new Date().toISOString(), channelType, platformId, threadId, JSON.stringify({ text: 'request' }));
 }
 
 beforeEach(() => {
@@ -134,7 +135,7 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
   });
 
   it('allows task delivery to the session destination', async () => {
-    seedInboundMessage('task-source', 'task', 'slack', 'C-CURRENT');
+    seedInboundMessage('task-source', 'task', 'slack', 'C-CURRENT', 'thread-task-origin');
     publishCurrentActionSource('task-source');
 
     await sendMessage.handler({ to: 'current', text: 'Scheduled result' });
@@ -142,6 +143,18 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
     const out = getUndeliveredMessages();
     expect(out).toHaveLength(1);
     expect(out[0].platform_id).toBe('C-CURRENT');
+    expect(out[0].thread_id).toBe('thread-task-origin');
+  });
+
+  it('preserves a captured channel-root task route instead of falling back to session routing', async () => {
+    seedInboundMessage('task-source', 'task', 'slack', 'C-CURRENT', null);
+    publishCurrentActionSource('task-source');
+
+    await sendMessage.handler({ to: 'current', text: 'Scheduled root result' });
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(out[0].thread_id).toBeNull();
   });
 
   it('fails open when the action source is missing', async () => {
