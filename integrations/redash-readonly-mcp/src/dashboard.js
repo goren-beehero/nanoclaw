@@ -26,7 +26,7 @@ export function summarizeDashboard(dashboard) {
       visualization_id: widget.visualization_id ?? widget.visualization?.id,
       visualization_name: widget.visualization?.name,
       visualization_type: widget.visualization?.type,
-      query_id: widget.visualization?.query_id,
+      query_id: visualizationQueryId(widget),
       parameter_mappings: normalizeNamedMap(widget.options?.parameterMappings),
     })),
   };
@@ -40,7 +40,7 @@ export async function buildDashboardExecutionPlan(client, dashboard, supplied = 
   const plan = [];
 
   for (const widget of widgets(dashboard)) {
-    const queryId = widget.visualization?.query_id;
+    const queryId = visualizationQueryId(widget);
     if (!Number.isInteger(queryId)) continue;
 
     let query = queryCache.get(queryId);
@@ -234,6 +234,10 @@ function deduplicatePlan(entries) {
 
 function widgets(dashboard) {
   return Array.isArray(dashboard?.widgets) ? dashboard.widgets : [];
+}
+
+function visualizationQueryId(widget) {
+  return widget.visualization?.query_id ?? widget.visualization?.query?.id;
 }
 
 function normalizeNamedList(value) {

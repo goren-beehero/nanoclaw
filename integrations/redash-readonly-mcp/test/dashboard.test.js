@@ -49,6 +49,29 @@ test("maps dashboard/static parameters and deduplicates identical executions", a
   assert.equal(plan.widgets[0].execution_id, plan.widgets[2].execution_id);
 });
 
+test("resolves query ids from the embedded visualization query shape", async () => {
+  const deployedShape = {
+    widgets: [{
+      id: 20,
+      visualization_id: 13358,
+      visualization: {
+        id: 13358,
+        name: "Gateways",
+        type: "CHART",
+        query: { id: 101 },
+      },
+      options: { parameterMappings: {} },
+    }],
+  };
+
+  const client = { getQuery: async (id) => ({ id, name: "Gateways", options: { parameters: [] } }) };
+  const plan = await buildDashboardExecutionPlan(client, deployedShape, {});
+
+  assert.equal(plan.executions.length, 1);
+  assert.equal(plan.executions[0].query_id, 101);
+  assert.equal(plan.widgets[0].visualization_id, 13358);
+});
+
 test("rejects user overrides for raw text and query-backed parameters", async () => {
   const textDashboard = {
     widgets: [{
