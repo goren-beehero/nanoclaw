@@ -10,6 +10,9 @@ by OneCLI's HTTPS proxy; the process must never receive `REDASH_API_KEY`.
 - `get_redash_cached_query_result`
 - `run_redash_dashboard`
 
+Dashboard inputs accept an exact title, numeric ID, or slug. Exact-title lookup
+is resolved internally and does not expose a general dashboard-list tool.
+
 Only saved queries already attached to the requested dashboard can be executed.
 Raw SQL, query/dashboard mutation, sharing, alerts, widgets, data-source access,
 and arbitrary URLs are not implemented. User-provided text and query-backed

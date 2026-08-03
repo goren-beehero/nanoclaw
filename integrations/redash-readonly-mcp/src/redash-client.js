@@ -63,6 +63,36 @@ export class RedashClient {
     return this.request("GET", `/api/dashboards/${encodeIdentifier(identifier, "dashboard")}`);
   }
 
+  async resolveDashboard(identifier) {
+    const value = String(identifier).trim();
+    if (/^[A-Za-z0-9_-]+$/.test(value)) {
+      try {
+        return await this.getDashboard(value);
+      } catch (error) {
+        if (error?.status !== 404) throw error;
+      }
+    }
+
+    const matches = [];
+    const pageSize = 100;
+    for (let page = 1; page <= 20; page += 1) {
+      const response = await this.request("GET", "/api/dashboards", {
+        params: { page, page_size: pageSize, order: "-updated_at" },
+      });
+      for (const dashboard of response?.results ?? []) {
+        if (dashboard?.name?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0) {
+          matches.push(dashboard);
+        }
+      }
+      const total = Number(response?.count ?? 0);
+      if (page * pageSize >= total || !(response?.results?.length)) break;
+    }
+
+    if (matches.length === 1) return this.getDashboard(matches[0].slug ?? matches[0].id);
+    if (matches.length > 1) throw new Error("Dashboard title is ambiguous; use its numeric ID or slug");
+    throw new Error("Dashboard not found by exact title, numeric ID, or slug");
+  }
+
   getQuery(queryId) {
     return this.request("GET", `/api/queries/${positiveInteger(queryId, "queryId")}`);
   }
@@ -90,6 +120,7 @@ export function isAllowedRequest(method, path) {
   const upperMethod = method.toUpperCase();
   if (upperMethod === "GET") {
     return [
+      /^\/api\/dashboards$/,
       /^\/api\/dashboards\/[A-Za-z0-9_-]+$/,
       /^\/api\/queries\/\d+$/,
       /^\/api\/queries\/\d+\/results$/,
