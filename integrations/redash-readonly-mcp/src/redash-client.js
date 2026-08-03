@@ -16,13 +16,15 @@ export class RedashClient {
     baseUrl,
     allowedHost = "internal.beehero.io",
     allowInsecureLocalhost = false,
+    allowInsecureHttp = false,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   }) {
     const url = new URL(baseUrl);
     const localTestHost = allowInsecureLocalhost && ["127.0.0.1", "localhost"].includes(url.hostname);
-    if (!localTestHost && (url.protocol !== "https:" || url.hostname !== allowedHost)) {
-      throw new Error(`REDASH_URL must be https://${allowedHost}`);
+    const allowedProtocol = url.protocol === "https:" || (allowInsecureHttp && url.protocol === "http:");
+    if (!localTestHost && (!allowedProtocol || url.hostname !== allowedHost)) {
+      throw new Error(`REDASH_URL must use the approved scheme and host ${allowedHost}`);
     }
     if (url.username || url.password || url.search || url.hash) {
       throw new Error("REDASH_URL must not contain credentials, a query string, or a fragment");

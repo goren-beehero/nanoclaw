@@ -18,6 +18,7 @@ if (process.env.REDASH_API_KEY) {
 const client = new RedashClient({
   baseUrl: process.env.REDASH_URL ?? "https://internal.beehero.io",
   allowedHost: process.env.REDASH_ALLOWED_HOST ?? "internal.beehero.io",
+  allowInsecureHttp: process.env.REDASH_ALLOW_INSECURE_HTTP === "true",
 });
 
 const server = new McpServer({ name: "beehero-redash-readonly", version: "0.1.0" });
