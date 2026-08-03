@@ -78,7 +78,7 @@ export class RedashClient {
   }
 
   getJob(jobId) {
-    return this.request("GET", `/api/jobs/${positiveInteger(jobId, "jobId")}`);
+    return this.request("GET", `/api/jobs/${encodeJobId(jobId)}`);
   }
 
   getQueryResult(resultId) {
@@ -93,7 +93,7 @@ export function isAllowedRequest(method, path) {
       /^\/api\/dashboards\/[A-Za-z0-9_-]+$/,
       /^\/api\/queries\/\d+$/,
       /^\/api\/queries\/\d+\/results$/,
-      /^\/api\/jobs\/\d+$/,
+      /^\/api\/jobs\/(?:\d+|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/,
       /^\/api\/query_results\/\d+$/,
     ].some((pattern) => pattern.test(path));
   }
@@ -106,6 +106,15 @@ function positiveInteger(value, name) {
     throw new Error(`${name} must be a positive integer`);
   }
   return number;
+}
+
+function encodeJobId(value) {
+  const identifier = String(value).trim();
+  if (/^\d+$/.test(identifier) && Number(identifier) > 0) return identifier;
+  if (/^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/.test(identifier)) {
+    return identifier;
+  }
+  throw new Error("jobId must be a positive integer or UUID");
 }
 
 function encodeIdentifier(value, name) {

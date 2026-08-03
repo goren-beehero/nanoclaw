@@ -27,6 +27,8 @@ test("allows only approved Redash endpoints and methods", () => {
   assert.equal(isAllowedRequest("GET", "/api/dashboards/health-overview"), true);
   assert.equal(isAllowedRequest("GET", "/api/queries/6636"), true);
   assert.equal(isAllowedRequest("POST", "/api/queries/6636/results"), true);
+  assert.equal(isAllowedRequest("GET", "/api/jobs/22e8f33f-1b04-4dbe-b2b7-1a5aa53c8abf"), true);
+  assert.equal(isAllowedRequest("GET", "/api/jobs/../../users"), false);
   assert.equal(isAllowedRequest("POST", "/api/queries"), false);
   assert.equal(isAllowedRequest("DELETE", "/api/dashboards/1"), false);
   assert.equal(isAllowedRequest("GET", "/api/data_sources"), false);
@@ -39,6 +41,14 @@ test("never sends an authorization header itself", async () => {
   await client.getQuery(6636);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].headers.authorization, undefined);
+});
+
+test("accepts Redash UUID job ids without widening the path", async () => {
+  requests.length = 0;
+  const client = new RedashClient({ baseUrl, allowInsecureLocalhost: true });
+  await client.getJob("22e8f33f-1b04-4dbe-b2b7-1a5aa53c8abf");
+  assert.equal(requests[0].url, "/api/jobs/22e8f33f-1b04-4dbe-b2b7-1a5aa53c8abf");
+  assert.throws(() => client.getJob("../../users"), /positive integer or UUID/);
 });
 
 test("requires an explicit opt-in for HTTP on the exact internal host", () => {
