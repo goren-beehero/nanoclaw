@@ -1,0 +1,19 @@
+{
+  "name": "@beehero/redash-readonly-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A narrow, credential-free Redash MCP for Bobi",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "axios": "1.19.0",
+    "zod": "4.4.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
