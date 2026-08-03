@@ -41,6 +41,26 @@ test("never sends an authorization header itself", async () => {
   assert.equal(requests[0].headers.authorization, undefined);
 });
 
+test("requires an explicit opt-in for HTTP on the exact internal host", () => {
+  assert.throws(
+    () => new RedashClient({ baseUrl: "http://internal.beehero.io" }),
+    /approved scheme and host/,
+  );
+  assert.doesNotThrow(
+    () => new RedashClient({
+      baseUrl: "http://internal.beehero.io",
+      allowInsecureHttp: true,
+    }),
+  );
+  assert.throws(
+    () => new RedashClient({
+      baseUrl: "http://example.com",
+      allowInsecureHttp: true,
+    }),
+    /approved scheme and host/,
+  );
+});
+
 test("blocks client methods from escaping the endpoint allowlist", async () => {
   const client = new RedashClient({ baseUrl, allowInsecureLocalhost: true });
   await assert.rejects(() => client.request("DELETE", "/api/queries/6636"), /Blocked Redash API/);

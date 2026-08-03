@@ -21,6 +21,11 @@ parameter overrides are rejected.
 REDASH_URL=https://internal.beehero.io npm start
 ```
 
+If the approved internal Redash deployment has no TLS listener, HTTP remains
+blocked unless both the host is exact and `REDASH_ALLOW_INSECURE_HTTP=true` is
+set. This exception is intended only for `internal.beehero.io` on BeeHero's
+private network; HTTPS remains the default.
+
 The NanoClaw container must be configured by the OneCLI SDK so HTTPS requests
 flow through the gateway. OneCLI stores the API key as a generic secret for the
 exact host and injects `Authorization: Key {value}`.
