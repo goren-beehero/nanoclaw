@@ -27,9 +27,9 @@ server.registerTool(
   "get_redash_dashboard",
   {
     description: "Read a Redash dashboard definition and its query/parameter mappings without executing it",
-    inputSchema: { dashboard: z.string().min(1).describe("Dashboard numeric ID or slug") },
+    inputSchema: { dashboard: z.string().min(1).describe("Exact dashboard title, numeric ID, or slug") },
   },
-  async ({ dashboard }) => textResult(summarizeDashboard(await client.getDashboard(dashboard))),
+  async ({ dashboard }) => textResult(summarizeDashboard(await client.resolveDashboard(dashboard))),
 );
 
 server.registerTool(
@@ -70,7 +70,7 @@ server.registerTool(
   {
     description: "Execute only the saved queries already attached to a Redash dashboard using validated dashboard/widget parameters",
     inputSchema: {
-      dashboard: z.string().min(1).describe("Dashboard numeric ID or slug"),
+      dashboard: z.string().min(1).describe("Exact dashboard title, numeric ID, or slug"),
       dashboardParameters: z.record(z.string(), z.unknown()).default({}),
       widgetParameters: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
       maxAgeSeconds: z.number().int().min(60).max(86400).default(1800),
@@ -78,7 +78,7 @@ server.registerTool(
     },
   },
   async ({ dashboard, dashboardParameters, widgetParameters, maxAgeSeconds, rowLimit }) => {
-    const definition = await client.getDashboard(dashboard);
+    const definition = await client.resolveDashboard(dashboard);
     const plan = await buildDashboardExecutionPlan(client, definition, {
       dashboard: dashboardParameters,
       widgets: widgetParameters,

@@ -14,6 +14,19 @@ before(async () => {
     request.on("end", () => {
       requests.push({ method: request.method, url: request.url, headers: request.headers, body });
       response.setHeader("content-type", "application/json");
+      if (request.url?.startsWith("/api/dashboards?")) {
+        response.end(JSON.stringify({
+          count: 1,
+          page: 1,
+          page_size: 100,
+          results: [{ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS" }],
+        }));
+        return;
+      }
+      if (request.url === "/api/dashboards/fw-ver---on-season-175-aus") {
+        response.end(JSON.stringify({ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS" }));
+        return;
+      }
       response.end(JSON.stringify({ ok: true }));
     });
   });
@@ -24,6 +37,7 @@ before(async () => {
 after(async () => new Promise((resolve) => server.close(resolve)));
 
 test("allows only approved Redash endpoints and methods", () => {
+  assert.equal(isAllowedRequest("GET", "/api/dashboards"), true);
   assert.equal(isAllowedRequest("GET", "/api/dashboards/health-overview"), true);
   assert.equal(isAllowedRequest("GET", "/api/queries/6636"), true);
   assert.equal(isAllowedRequest("POST", "/api/queries/6636/results"), true);
@@ -33,6 +47,17 @@ test("allows only approved Redash endpoints and methods", () => {
   assert.equal(isAllowedRequest("DELETE", "/api/dashboards/1"), false);
   assert.equal(isAllowedRequest("GET", "/api/data_sources"), false);
   assert.equal(isAllowedRequest("GET", "https://example.com/api/queries/1"), false);
+});
+
+test("resolves an exact dashboard title without exposing a list tool", async () => {
+  requests.length = 0;
+  const client = new RedashClient({ baseUrl, allowInsecureLocalhost: true });
+  const dashboard = await client.resolveDashboard("FW VER - ON Season 175 AUS");
+  assert.equal(dashboard.id, 331);
+  assert.deepEqual(requests.map((request) => request.url), [
+    "/api/dashboards?page=1&page_size=100&order=-updated_at",
+    "/api/dashboards/fw-ver---on-season-175-aus",
+  ]);
 });
 
 test("never sends an authorization header itself", async () => {
