@@ -1210,6 +1210,124 @@ describe('routing metadata preservation', () => {
   });
 });
 
+describe('current-channel resource context routing', () => {
+  const listContextResources = vi.fn();
+
+  beforeEach(async () => {
+    createAgentGroup({
+      id: 'ag-resource',
+      name: 'Resource Agent',
+      folder: 'resource-agent',
+      agent_provider: null,
+      created_at: now(),
+    });
+    createMessagingGroup({
+      id: 'mg-resource',
+      channel_type: 'resource-chat',
+      platform_id: 'channel-A',
+      name: 'Finance',
+      is_group: 1,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-resource',
+      messaging_group_id: 'mg-resource',
+      agent_group_id: 'ag-resource',
+      engage_mode: 'pattern',
+      engage_pattern: '.',
+      sender_scope: 'all',
+      ignored_message_policy: 'drop',
+      session_mode: 'shared',
+      priority: 0,
+      created_at: now(),
+    });
+    listContextResources.mockReset().mockResolvedValue({
+      channelName: 'finance',
+      resources: [
+        { id: 'Bk1', kind: 'bookmark', title: 'Payment terms', url: 'https://example.com/terms' },
+        { id: 'F1', kind: 'file', title: 'Noisy upload', url: 'https://example.com/file' },
+      ],
+    });
+
+    const { registerChannelAdapter, initChannelAdapters } = await import('./channels/channel-registry.js');
+    registerChannelAdapter('resource-chat', {
+      factory: () => ({
+        name: 'resource-chat',
+        channelType: 'resource-chat',
+        supportsThreads: true,
+        async setup() {},
+        async teardown() {},
+        isConnected: () => true,
+        async deliver() {
+          return undefined;
+        },
+        listContextResources,
+      }),
+    });
+    await initChannelAdapters(() => ({
+      onInbound: () => {},
+      onInboundEvent: () => {},
+      onMetadata: () => {},
+      onAction: () => {},
+    }));
+  });
+
+  afterEach(async () => {
+    const { teardownChannelAdapters } = await import('./channels/channel-registry.js');
+    await teardownChannelAdapters();
+  });
+
+  it('adds bounded bookmark metadata only to the first message in a session', async () => {
+    const { routeInbound } = await import('./router.js');
+    const event = (id: string, text: string): InboundEvent => ({
+      channelType: 'resource-chat',
+      platformId: 'channel-A',
+      threadId: 'thread-A',
+      message: { id, kind: 'chat', content: JSON.stringify({ sender: 'A', text }), timestamp: now() },
+    });
+
+    await routeInbound(event('msg-resource-1', 'first'));
+    await routeInbound(event('msg-resource-2', 'follow-up'));
+
+    const session = findSession('mg-resource', 'thread-A');
+    const db = new Database(inboundDbPath('ag-resource', session!.id));
+    const rows = db.prepare('SELECT content FROM messages_in ORDER BY seq').all() as Array<{ content: string }>;
+    db.close();
+
+    expect(listContextResources).toHaveBeenCalledOnce();
+    expect(listContextResources).toHaveBeenCalledWith('channel-A');
+    expect(JSON.parse(rows[0].content).channelResources).toEqual({
+      channelName: 'finance',
+      resources: [{ id: 'Bk1', kind: 'bookmark', title: 'Payment terms', url: 'https://example.com/terms' }],
+    });
+    expect(JSON.parse(rows[1].content).channelResources).toBeUndefined();
+  });
+
+  it('routes the original message when resource discovery fails', async () => {
+    const { routeInbound } = await import('./router.js');
+    listContextResources.mockRejectedValueOnce(new Error('temporary Slack error'));
+
+    await routeInbound({
+      channelType: 'resource-chat',
+      platformId: 'channel-A',
+      threadId: 'thread-failure',
+      message: {
+        id: 'msg-resource-failure',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'A', text: 'still route me' }),
+        timestamp: now(),
+      },
+    });
+
+    const session = findSession('mg-resource', 'thread-failure');
+    const db = new Database(inboundDbPath('ag-resource', session!.id));
+    const row = db.prepare('SELECT content FROM messages_in').get() as { content: string };
+    db.close();
+    expect(JSON.parse(row.content)).toEqual({ sender: 'A', text: 'still route me' });
+  });
+});
+
 describe('writeSessionRouting', () => {
   it('populates session_routing from the messaging group', () => {
     createAgentGroup({

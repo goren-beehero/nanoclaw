@@ -130,6 +130,15 @@ register({
 });
 
 register({
+  name: 'channel-resources-list',
+  description: 'test command (current channel resources)',
+  resource: 'channel-resources',
+  access: 'open',
+  parseArgs: (raw) => raw,
+  handler: async (args) => ({ echo: args }),
+});
+
+register({
   name: 'wirings-list',
   description: 'test command (wirings resource — not allowed)',
   resource: 'wirings',
@@ -415,6 +424,20 @@ describe('CLI scope enforcement', () => {
     expect(resp.ok).toBe(true);
     if (resp.ok) {
       const data = resp.data as { echo: Record<string, unknown> };
+      expect(data.echo.group).toBe('g1');
+      expect(data.echo.id).toBeUndefined();
+    }
+  });
+
+  it('group: allows current-channel resources without route arguments', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    const resp = await dispatch({ id: '1', command: 'channel-resources-list', args: {} }, agentCtx());
+
+    expect(resp.ok).toBe(true);
+    if (resp.ok) {
+      const data = resp.data as { echo: Record<string, unknown> };
+      expect(data.echo.agent_group_id).toBe('g1');
       expect(data.echo.group).toBe('g1');
       expect(data.echo.id).toBeUndefined();
     }

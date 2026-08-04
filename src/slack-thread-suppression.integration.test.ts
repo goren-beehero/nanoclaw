@@ -12,6 +12,7 @@ import {
   runMigrations,
 } from './db/index.js';
 import { findSessionForAgent } from './db/sessions.js';
+import { closeSlackOutOfScopeThread, getSlackOutOfScopeThread } from './db/slack-out-of-scope-threads.js';
 import { getDeliveryAction } from './delivery.js';
 import { inboundDbPath } from './session-manager.js';
 import type { InboundEvent } from './channels/adapter.js';
@@ -65,7 +66,6 @@ function event(
   channel = 'C-TEST',
   text = mention ? '<@U-BOBI> help' : 'ambient question',
   senderId = 'U-SENDER',
-  threadSubscribed = false,
 ): InboundEvent {
   return {
     channelType: 'slack',
@@ -77,7 +77,6 @@ function event(
       content: JSON.stringify({ senderId, text, raw: { text } }),
       timestamp: now(),
       isMention: mention,
-      isThreadSubscribed: threadSubscribed,
       isGroup: true,
     },
   };
@@ -230,49 +229,74 @@ describe('Slack suppression router integration', () => {
     expect(findSessionForAgent('ag-bobi', 'mg-other', 'slack:C-OTHER:600.1')).toBeDefined();
   });
 
-  it('keeps a subscribed thread routable after recording a knowledge gap', async () => {
-    getDb()
-      .prepare(
-        `UPDATE messaging_group_agents
-         SET engage_mode = 'mention-sticky', engage_pattern = NULL
-         WHERE id = 'mga-test'`,
-      )
-      .run();
+  it('keeps an unmentioned follow-up routable after recording a knowledge gap', async () => {
     const { routeInbound } = await import('./router.js');
     const { wakeContainer } = await import('./container-runner.js');
     const threadId = 'slack:C-TEST:610.1';
+    getDb().prepare("UPDATE messaging_group_agents SET engage_mode = 'mention-sticky' WHERE id = 'mga-test'").run();
 
-    await routeInbound(event('610.1', threadId, true, 'C-TEST', '<@U-BOBI> check this', 'U-GUY'));
+    await routeInbound(event('610.1', threadId, true, 'C-TEST', '<@U-BOBI> analyze Aircall AI Assist output'));
     const session = findSessionForAgent('ag-bobi', 'mg-test', threadId);
     expect(session).toBeDefined();
     const handler = getDeliveryAction('record_knowledge_gap');
-    expect(handler).toBeDefined();
-    const inDb = new Database(inboundDbPath('ag-bobi', session!.id));
+    const inDb = new Database(':memory:');
     await handler!(
       {
         action: 'record_knowledge_gap',
         category: 'missing_capability',
-        capability_key: 'aircall action-item summaries',
-        summary: 'Structured call action items are unavailable',
-        scope_boundary: 'Conversation analysis only',
-        route_attempted: 'Aircall read-only connector',
+        capability_key: 'aircall ai assist transcript analysis',
+        summary: 'Analyze an Aircall AI Assist transcript',
+        scope_boundary: 'AI Assist is not available through the current connection',
+        route_attempted: 'Aircall read-only MCP',
         source_message_id: '610.1',
       },
       session!,
       inDb,
     );
     inDb.close();
+    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', threadId)).toBeUndefined();
     vi.mocked(wakeContainer).mockClear();
 
-    await routeInbound(event('610.2', threadId, false, 'C-TEST', 'Try the last three calls instead.', 'U-GUY', true));
+    const followUp = event('610.2', threadId, false, 'C-TEST', 'Then compare the three call records we do have.');
+    followUp.message.isThreadSubscribed = true;
+    await routeInbound(followUp);
+    await routeInbound(followUp);
 
     const db = new Database(inboundDbPath('ag-bobi', session!.id));
     const messages = db.prepare('SELECT id FROM messages_in ORDER BY seq').all();
     db.close();
     expect(messages).toHaveLength(2);
     expect(wakeContainer).toHaveBeenCalledTimes(1);
-    expect((getDb().prepare('SELECT COUNT(*) AS n FROM knowledge_gaps').get() as { n: number }).n).toBe(1);
-    expect((getDb().prepare('SELECT COUNT(*) AS n FROM slack_out_of_scope_threads').get() as { n: number }).n).toBe(0);
+  });
+
+  it('ignores legacy out-of-scope rows and preserves normal thread routing', async () => {
+    const { routeInbound } = await import('./router.js');
+    const { wakeContainer } = await import('./container-runner.js');
+    const threadId = 'slack:C-TEST:620.1';
+    getDb().prepare("UPDATE messaging_group_agents SET engage_mode = 'mention-sticky' WHERE id = 'mga-test'").run();
+
+    await routeInbound(event('620.1', threadId, true, 'C-TEST', '<@U-BOBI> run a production backfill'));
+    closeSlackOutOfScopeThread({
+      agentGroupId: 'ag-bobi',
+      channelId: 'C-TEST',
+      threadId,
+      knowledgeGapFingerprint: 'gap-620',
+      sourceEventKey: 'sess:620.1',
+    });
+    vi.mocked(wakeContainer).mockClear();
+
+    await routeInbound(event('620.2', threadId, true, 'C-TEST', '<@U-BOBI> check task failures instead'));
+    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', threadId)).toBeDefined();
+    const followUp = event('620.3', threadId, false, 'C-TEST', 'Focus on the last two hours.');
+    followUp.message.isThreadSubscribed = true;
+    await routeInbound(followUp);
+
+    const session = findSessionForAgent('ag-bobi', 'mg-test', threadId);
+    const db = new Database(inboundDbPath('ag-bobi', session!.id));
+    const messages = db.prepare('SELECT id FROM messages_in ORDER BY seq').all();
+    db.close();
+    expect(messages).toHaveLength(3);
+    expect(wakeContainer).toHaveBeenCalledTimes(2);
   });
 
   it('lets a user opt out and back in while limiting suppression to wide announcements', async () => {

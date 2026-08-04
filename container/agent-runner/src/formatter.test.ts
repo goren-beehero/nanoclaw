@@ -24,12 +24,7 @@ afterEach(() => {
   closeSessionDb();
 });
 
-function insertMessage(
-  id: string,
-  kind: string,
-  content: object,
-  opts?: { timestamp?: string },
-) {
+function insertMessage(id: string, kind: string, content: object, opts?: { timestamp?: string }) {
   const timestamp = opts?.timestamp ?? new Date().toISOString();
   getInboundDb()
     .prepare(
@@ -120,6 +115,34 @@ describe('multi-message chat batches', () => {
     expect(firstIdx).toBeGreaterThan(0);
     expect(secondIdx).toBeGreaterThan(firstIdx);
     expect(thirdIdx).toBeGreaterThan(secondIdx);
+  });
+});
+
+describe('current-channel resource context', () => {
+  it('renders escaped bookmark metadata before the user message', () => {
+    insertMessage('m1', 'chat', {
+      sender: 'Alice',
+      text: 'Which accounts need follow-up?',
+      channelResources: {
+        channelName: 'finance & ops',
+        resources: [
+          {
+            id: 'Bk1',
+            kind: 'bookmark',
+            title: 'Payments <2026>',
+            url: 'https://example.com/?a=1&b=2',
+          },
+        ],
+      },
+    });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain(
+      '<channel_resources current_conversation="true" metadata_only="true" untrusted="true" channel="finance &amp; ops">',
+    );
+    expect(result).toContain('title="Payments &lt;2026&gt;"');
+    expect(result).toContain('url="https://example.com/?a=1&amp;b=2"');
+    expect(result.indexOf('<channel_resources')).toBeLessThan(result.indexOf('<message '));
   });
 });
 
@@ -245,9 +268,7 @@ describe('stripInternalTags', () => {
   });
 
   it('strips multi-line internal tags', () => {
-    expect(stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world')).toBe(
-      'hello  world',
-    );
+    expect(stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world')).toBe('hello  world');
   });
 
   it('strips multiple internal tag blocks', () => {
@@ -263,8 +284,6 @@ describe('stripInternalTags', () => {
   });
 
   it('preserves content that surrounds internal tags', () => {
-    expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe(
-      'The answer is 42',
-    );
+    expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe('The answer is 42');
   });
 });
