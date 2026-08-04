@@ -9,9 +9,12 @@ by OneCLI's HTTPS proxy; the process must never receive `REDASH_API_KEY`.
 - `get_redash_query`
 - `get_redash_cached_query_result`
 - `run_redash_dashboard`
+- `search_redash_dashboards`
 
-Dashboard inputs accept an exact title, numeric ID, or slug. Exact-title lookup
-is resolved internally and does not expose a general dashboard-list tool.
+Dashboard inputs accept a title, high-confidence topic phrase, numeric ID, or
+slug. Fuzzy discovery ranks recent dashboard, widget, visualization, and saved
+query metadata without returning SQL, API keys, or result rows. Ambiguous
+searches return a small candidate list instead of silently selecting a result.
 
 Only saved queries already attached to the requested dashboard can be executed.
 Raw SQL, query/dashboard mutation, sharing, alerts, widgets, data-source access,

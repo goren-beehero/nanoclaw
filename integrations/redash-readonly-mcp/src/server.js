@@ -24,10 +24,23 @@ const client = new RedashClient({
 const server = new McpServer({ name: "beehero-redash-readonly", version: "0.1.0" });
 
 server.registerTool(
+  "search_redash_dashboards",
+  {
+    description: "Find recent Redash dashboards by approximate name or topic using metadata only; returns ranked candidates without SQL or result data",
+    inputSchema: {
+      query: z.string().min(2).max(300).describe("Approximate dashboard name or behavior/topic description"),
+      limit: z.number().int().min(1).max(10).default(5),
+      maxAgeDays: z.number().int().min(1).max(3650).default(365),
+    },
+  },
+  async ({ query, limit, maxAgeDays }) => textResult(await client.searchDashboards(query, { limit, maxAgeDays })),
+);
+
+server.registerTool(
   "get_redash_dashboard",
   {
     description: "Read a Redash dashboard definition and its query/parameter mappings without executing it",
-    inputSchema: { dashboard: z.string().min(1).describe("Exact dashboard title, numeric ID, or slug") },
+    inputSchema: { dashboard: z.string().min(1).describe("Dashboard title, high-confidence topic phrase, numeric ID, or slug") },
   },
   async ({ dashboard }) => textResult(summarizeDashboard(await client.resolveDashboard(dashboard))),
 );
@@ -70,7 +83,7 @@ server.registerTool(
   {
     description: "Execute only the saved queries already attached to a Redash dashboard using validated dashboard/widget parameters",
     inputSchema: {
-      dashboard: z.string().min(1).describe("Exact dashboard title, numeric ID, or slug"),
+      dashboard: z.string().min(1).describe("Dashboard title, high-confidence topic phrase, numeric ID, or slug"),
       dashboardParameters: z.record(z.string(), z.unknown()).default({}),
       widgetParameters: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
       maxAgeSeconds: z.number().int().min(60).max(86400).default(1800),
