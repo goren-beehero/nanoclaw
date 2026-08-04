@@ -101,16 +101,11 @@ describe('record_knowledge_gap delivery action', () => {
       thread_id: session.thread_id,
       test_run_id: 'test-run-1',
     });
-    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', session.thread_id!)).toMatchObject({
-      knowledgeGapFingerprint: gap.fingerprint,
-      sourceEventKey: 'sess-test:slack-message-1',
-      testRunId: 'test-run-1',
-      suppressedCount: 0,
-    });
+    expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', session.thread_id!)).toBeUndefined();
     expect(cleanupKnowledgeGapTestRun('test-run-1')).toEqual({
       occurrencesDeleted: 1,
       gapsDeleted: 1,
-      threadClosuresDeleted: 1,
+      threadClosuresDeleted: 0,
     });
     expect(getSlackOutOfScopeThread('ag-bobi', 'C-TEST', session.thread_id!)).toBeUndefined();
   });

@@ -3,7 +3,6 @@ import { getKnowledgeGapTestRun, recordKnowledgeGap, type KnowledgeGapCategory }
 import { registerDeliveryAction } from '../../delivery.js';
 import { unguarded } from '../../guard/index.js';
 import { log } from '../../log.js';
-import { closeSlackOutOfScopeThread } from '../../db/slack-out-of-scope-threads.js';
 
 const categories = new Set<KnowledgeGapCategory>(['missing_route', 'missing_capability', 'unsupported_action']);
 
@@ -39,16 +38,6 @@ registerDeliveryAction(
       threadId,
       testRunId,
     });
-    if (channelType === 'slack' && platformId && threadId) {
-      closeSlackOutOfScopeThread({
-        agentGroupId: session.agent_group_id,
-        channelId: platformId,
-        threadId,
-        knowledgeGapFingerprint: result.record.fingerprint,
-        sourceEventKey: `${session.id}:${sourceMessageId}`,
-        testRunId,
-      });
-    }
     log.info('Knowledge gap captured', {
       fingerprint: result.record.fingerprint,
       category,
@@ -56,5 +45,5 @@ registerDeliveryAction(
       testRunId: testRunId ?? undefined,
     });
   },
-  unguarded('internal bookkeeping action that records a knowledge gap and closes its matching Slack thread'),
+  unguarded('internal bookkeeping action that records a knowledge gap'),
 );
