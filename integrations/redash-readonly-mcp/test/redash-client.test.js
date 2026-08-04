@@ -19,12 +19,12 @@ before(async () => {
           count: 1,
           page: 1,
           page_size: 100,
-          results: [{ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS" }],
+          results: [{ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS", updated_at: new Date().toISOString() }],
         }));
         return;
       }
       if (request.url === "/api/dashboards/fw-ver---on-season-175-aus") {
-        response.end(JSON.stringify({ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS" }));
+        response.end(JSON.stringify({ id: 331, slug: "fw-ver---on-season-175-aus", name: "FW VER - ON Season 175 AUS", updated_at: new Date().toISOString() }));
         return;
       }
       response.end(JSON.stringify({ ok: true }));
@@ -58,6 +58,15 @@ test("resolves an exact dashboard title without exposing a list tool", async () 
     "/api/dashboards?page=1&page_size=100&order=-updated_at",
     "/api/dashboards/fw-ver---on-season-175-aus",
   ]);
+});
+
+test("resolves a high-confidence dashboard topic phrase", async () => {
+  requests.length = 0;
+  const client = new RedashClient({ baseUrl, allowInsecureLocalhost: true });
+  const dashboard = await client.resolveDashboard("hardware monitor season 175");
+  assert.equal(dashboard.id, 331);
+  assert.equal(requests.some((request) => request.url?.startsWith("/api/dashboards?")), true);
+  assert.equal(requests.at(-1).url, "/api/dashboards/fw-ver---on-season-175-aus");
 });
 
 test("never sends an authorization header itself", async () => {
