@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-test("advertises only the four bounded tools over MCP", async () => {
+test("advertises only the five bounded tools over MCP", async () => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["src/server.js"],
@@ -24,6 +24,7 @@ test("advertises only the four bounded tools over MCP", async () => {
       "get_redash_dashboard",
       "get_redash_query",
       "run_redash_dashboard",
+      "search_redash_dashboards",
     ]);
   } finally {
     await client.close();

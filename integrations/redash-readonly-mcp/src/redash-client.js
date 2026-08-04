@@ -1,4 +1,5 @@
 import axios from "axios";
+import { dashboardSearchText, rankDashboards } from "./dashboard-search.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -73,24 +74,62 @@ export class RedashClient {
       }
     }
 
-    const matches = [];
+    const dashboards = await this.listDashboards();
+    const matches = dashboards.filter(
+      (dashboard) => dashboard?.name?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0,
+    );
+
+    if (matches.length === 1) return this.getDashboard(matches[0].slug ?? matches[0].id);
+    if (matches.length > 1) throw new Error("Dashboard title is ambiguous; use its numeric ID or slug");
+
+    const search = await this.searchDashboards(value, { dashboards, limit: 3 });
+    if (search.auto_select && search.best_match) {
+      return this.getDashboard(search.best_match.slug ?? search.best_match.id);
+    }
+    if (search.candidates.length) {
+      const names = search.candidates.map((candidate) => `${candidate.name} (#${candidate.id})`).join(", ");
+      throw new Error(`Dashboard search was ambiguous; use one of: ${names}`);
+    }
+    throw new Error("Dashboard not found by title, topic, numeric ID, or slug");
+  }
+
+  async listDashboards() {
+    const dashboards = [];
     const pageSize = 100;
     for (let page = 1; page <= 20; page += 1) {
       const response = await this.request("GET", "/api/dashboards", {
         params: { page, page_size: pageSize, order: "-updated_at" },
       });
-      for (const dashboard of response?.results ?? []) {
-        if (dashboard?.name?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0) {
-          matches.push(dashboard);
-        }
-      }
+      dashboards.push(...(response?.results ?? []));
       const total = Number(response?.count ?? 0);
       if (page * pageSize >= total || !(response?.results?.length)) break;
     }
+    return dashboards;
+  }
 
-    if (matches.length === 1) return this.getDashboard(matches[0].slug ?? matches[0].id);
-    if (matches.length > 1) throw new Error("Dashboard title is ambiguous; use its numeric ID or slug");
-    throw new Error("Dashboard not found by exact title, numeric ID, or slug");
+  async searchDashboards(query, options = {}) {
+    const limit = options.limit ?? 5;
+    const maxAgeDays = options.maxAgeDays ?? 365;
+    const dashboards = options.dashboards ?? await this.listDashboards();
+    const shortlistSize = Math.min(20, Math.max(12, limit * 4));
+    const preliminary = rankDashboards(query, dashboards, { limit: shortlistSize, maxAgeDays });
+    const byId = new Map(dashboards.map((dashboard) => [dashboard.id, dashboard]));
+    const shortlist = preliminary.candidates.map((candidate) => byId.get(candidate.id)).filter(Boolean);
+
+    for (const dashboard of dashboards.slice(0, shortlistSize)) {
+      if (!shortlist.some((candidate) => candidate.id === dashboard.id)) shortlist.push(dashboard);
+      if (shortlist.length >= shortlistSize) break;
+    }
+
+    const hydrated = await mapWithConcurrency(shortlist, 5, async (dashboard) => {
+      try {
+        const definition = await this.getDashboard(dashboard.slug ?? dashboard.id);
+        return { ...dashboard, ...definition, search_text: dashboardSearchText(definition) };
+      } catch {
+        return { ...dashboard, search_text: dashboardSearchText(dashboard) };
+      }
+    });
+    return rankDashboards(query, hydrated, { limit, maxAgeDays });
   }
 
   getQuery(queryId) {
@@ -114,6 +153,16 @@ export class RedashClient {
   getQueryResult(resultId) {
     return this.request("GET", `/api/query_results/${positiveInteger(resultId, "resultId")}`);
   }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const queue = [...items];
+  const results = [];
+  async function worker() {
+    while (queue.length) results.push(await mapper(queue.shift()));
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+  return results;
 }
 
 export function isAllowedRequest(method, path) {
