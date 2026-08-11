@@ -1,4 +1,4 @@
-import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
+import { findByName, findByRouting, getAllDestinations, type DestinationEntry } from './destinations.js';
 import {
   getPendingMessages,
   markProcessing,
@@ -234,7 +234,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
     // Format messages: passthrough commands get raw text (only if the
     // provider natively handles slash commands), others get XML.
-    const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
+    const prompt = appendSlackTaskDeliveryRequirement(
+      formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands),
+      keep,
+    );
 
     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
 
@@ -337,6 +340,45 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
   }
 
   return parts.join('\n\n');
+}
+
+type TaskOriginMessage = Pick<MessageInRow, 'kind' | 'channel_type' | 'platform_id'>;
+
+/**
+ * Slack-origin task runs have no attached chat, so their final output is only
+ * an internal run log. Make the delivery intent deterministic at the runtime
+ * boundary using the route captured when the task was created. This leaves
+ * interactive chats, non-Slack tasks, and unrouted host/template tasks alone.
+ */
+export function appendSlackTaskDeliveryRequirement(prompt: string, messages: TaskOriginMessage[]): string {
+  if (messages.length === 0 || messages.some((message) => message.kind !== 'task')) return prompt;
+
+  const origin = messages[0];
+  if (
+    origin.channel_type !== 'slack' ||
+    !origin.platform_id ||
+    messages.some(
+      (message) =>
+        message.channel_type !== origin.channel_type || message.platform_id !== origin.platform_id,
+    )
+  ) {
+    return prompt;
+  }
+
+  const destination = findByRouting(origin.channel_type, origin.platform_id);
+  if (!destination) return prompt;
+
+  return (
+    `${prompt}\n\n` +
+    '<system>DELIVERY REQUIREMENT (mandatory):\n' +
+    'This scheduled task originated in Slack. After computing the result, you MUST make the user-visible delivery ' +
+    'through the explicit NanoClaw MCP tool that matches the requested output.\n' +
+    `- For a text report, call \`mcp__nanoclaw__send_message\` exactly once with \`to=\"${escapePromptXml(destination.name)}\"\` and the complete report.\n` +
+    `- For a requested file or artifact, call \`mcp__nanoclaw__send_file\` with \`to=\"${escapePromptXml(destination.name)}\"\` and the accompanying text. That file delivery satisfies this requirement; do not also call send_message unless the task explicitly requests a separate text message.\n` +
+    '- Make exactly the delivery or deliveries requested by the task; do not add a duplicate acknowledgement.\n' +
+    'Do not treat final output as delivered; final output is only the internal task log.\n' +
+    'Deliver only to this task\'s originating Slack thread.</system>'
+  );
 }
 
 interface QueryResult {
