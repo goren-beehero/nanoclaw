@@ -168,7 +168,7 @@ export function getMessageForRetry(
 export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Database): void {
   const completed = outDb
     .prepare(
-      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error')",
+      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error', 'script-skip:gated')",
     )
     .all() as Array<{ message_id: string; status: string }>;
 

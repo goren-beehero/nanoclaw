@@ -32,6 +32,20 @@ export interface WriteMessageOut {
   content: string;
 }
 
+export type TaskRunEventType = 'provider_error' | 'delivery_tool_error';
+
+/** Persist structured evidence for the host-side scheduled-task health audit. */
+export function recordTaskRunEvent(messageId: string | null, eventType: TaskRunEventType, detail: string): void {
+  if (!messageId) return;
+  const id = `task-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  getOutboundDb()
+    .prepare(
+      `INSERT INTO task_run_events (id, message_id, event_type, occurred_at, detail)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(id, messageId, eventType, new Date().toISOString(), detail.slice(0, 1000));
+}
+
 /**
  * Write a new outbound message, auto-assigning an odd seq number.
  * Container uses odd seq (1, 3, 5...), host uses even (2, 4, 6...).
@@ -92,9 +106,7 @@ export function getMessageIdBySeq(seq: number): string | null {
   const inbound = getInboundDb();
 
   // Inbound messages: ID is already the platform message ID
-  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as
-    | { id: string }
-    | undefined;
+  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as { id: string } | undefined;
   if (inRow) return inRow.id;
 
   // Outbound messages: look up platform message ID from delivered table

@@ -4,7 +4,8 @@
  *
  *   script error → applyPreTaskScripts skips with reason 'error'
  *   → markScriptSkipped acks `script-skip:error` in outbound.db
- *   (gated → plain 'completed': the monitor working as designed).
+ *   (gated → 'script-skip:gated': host still records completed, while the
+ *   delivery monitor can reliably exclude it).
  *
  * The host leg (ack → FAILED run → streak backoff) is pinned in
  * src/db/session-db.test.ts and src/modules/scheduling/recurrence.test.ts —
@@ -35,8 +36,11 @@ function insertTask(id: string, script: string) {
 }
 
 const ackStatus = (id: string): string | undefined =>
-  (getOutboundDb().prepare('SELECT status FROM processing_ack WHERE message_id = ?').get(id) as { status: string } | undefined)
-    ?.status;
+  (
+    getOutboundDb().prepare('SELECT status FROM processing_ack WHERE message_id = ?').get(id) as
+      | { status: string }
+      | undefined
+  )?.status;
 
 describe('script-skip ack chain (container leg)', () => {
   it('an erroring script skips with reason "error" and acks script-skip:error', async () => {
@@ -50,7 +54,7 @@ describe('script-skip ack chain (container leg)', () => {
     expect(ackStatus('t-err')).toBe('script-skip:error');
   });
 
-  it('a deliberate wakeAgent=false gate acks plain completed — never backs off', async () => {
+  it('a deliberate wakeAgent=false gate keeps an explicit audit marker', async () => {
     insertTask('t-gated', 'echo \'{"wakeAgent": false}\'');
     const { keep, skipped } = await applyPreTaskScripts(getPendingMessages());
 
@@ -58,7 +62,7 @@ describe('script-skip ack chain (container leg)', () => {
     expect(skipped).toEqual([{ id: 't-gated', reason: 'gated' }]);
 
     markScriptSkipped(skipped);
-    expect(ackStatus('t-gated')).toBe('completed');
+    expect(ackStatus('t-gated')).toBe('script-skip:gated');
   });
 
   it('wakeAgent=true keeps the task and enriches the prompt with script data', async () => {

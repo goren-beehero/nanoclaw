@@ -200,6 +200,23 @@ CREATE TABLE IF NOT EXISTS delivered (
   delivered_at        TEXT NOT NULL
 );
 
+-- Observational state for the Slack scheduled-task delivery health audit.
+-- Host-owned and deliberately separate from task lifecycle state: the monitor
+-- may record/open/resolve findings, but it never changes or re-runs a task.
+CREATE TABLE IF NOT EXISTS task_delivery_health (
+  task_message_id TEXT PRIMARY KEY,
+  classification TEXT NOT NULL,
+  state          TEXT NOT NULL, -- 'open' | 'resolved' | 'recovered'
+  details        TEXT NOT NULL,
+  first_seen     TEXT NOT NULL,
+  last_seen      TEXT NOT NULL,
+  resolved_at    TEXT
+);
+CREATE TABLE IF NOT EXISTS task_delivery_health_meta (
+  id                 INTEGER PRIMARY KEY CHECK (id = 1),
+  monitor_started_at TEXT NOT NULL
+);
+
 -- Destination map for this session's agent.
 -- Host overwrites on every container wake AND on demand (rewires, new child
 -- agents, etc.). Container queries this live on every lookup, so changes
@@ -250,6 +267,18 @@ CREATE TABLE IF NOT EXISTS processing_ack (
   status         TEXT NOT NULL,
   status_changed TEXT NOT NULL
 );
+
+-- Structured evidence emitted by the task runtime. The host's delivery-health
+-- audit reads these rows to distinguish provider/tool failures from a model
+-- that simply produced no outbound delivery.
+CREATE TABLE IF NOT EXISTS task_run_events (
+  id          TEXT PRIMARY KEY,
+  message_id  TEXT NOT NULL,
+  event_type  TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  detail      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_run_events_message ON task_run_events(message_id, occurred_at);
 
 -- Persistent key/value state owned by the container. Used (among other things)
 -- to store the SDK session ID so the agent's conversation resumes across

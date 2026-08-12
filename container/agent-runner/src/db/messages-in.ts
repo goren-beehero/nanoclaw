@@ -122,8 +122,9 @@ export function markCompleted(ids: string[]): void {
 
 /**
  * Ack task messages whose pre-task script gated the run. The reason decides
- * the ack: `gated` (wakeAgent=false) is the monitor working as designed → a
- * plain `completed`; `error` (broken script) → `script-skip:error`, which the
+ * the ack: `gated` (wakeAgent=false) is the monitor working as designed →
+ * `script-skip:gated` (host maps it to completed while preserving the audit
+ * marker); `error` (broken script) → `script-skip:error`, which the
  * host's ack sync records as a FAILED run so recurrence can read the trailing
  * failed streak off the occurrence rows and back the series off.
  */
@@ -134,16 +135,16 @@ export function markScriptSkipped(skips: Array<{ id: string; reason: string }>):
     'INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, ?, ?)',
   );
   db.transaction(() => {
-    for (const s of skips) stmt.run(s.id, s.reason === 'error' ? 'script-skip:error' : 'completed', new Date().toISOString());
+    for (const s of skips) {
+      stmt.run(s.id, s.reason === 'error' ? 'script-skip:error' : 'script-skip:gated', new Date().toISOString());
+    }
   })();
 }
 
 /** Mark a single message as failed — writes to processing_ack in outbound.db. */
 export function markFailed(id: string): void {
   getOutboundDb()
-    .prepare(
-      "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'failed', ?)",
-    )
+    .prepare("INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'failed', ?)")
     .run(id, new Date().toISOString());
 }
 

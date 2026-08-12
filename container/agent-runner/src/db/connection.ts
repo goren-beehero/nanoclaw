@@ -111,6 +111,15 @@ export function getOutboundDb(): Database {
         tool_started_at          TEXT,
         updated_at               TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS task_run_events (
+        id          TEXT PRIMARY KEY,
+        message_id  TEXT NOT NULL,
+        event_type  TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        detail      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_run_events_message
+        ON task_run_events(message_id, occurred_at);
     `);
   }
   return _outbound;
@@ -252,6 +261,14 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       tool_started_at          TEXT,
       updated_at               TEXT NOT NULL
     );
+    CREATE TABLE task_run_events (
+      id          TEXT PRIMARY KEY,
+      message_id  TEXT NOT NULL,
+      event_type  TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      detail      TEXT NOT NULL
+    );
+    CREATE INDEX idx_task_run_events_message ON task_run_events(message_id, occurred_at);
   `);
 
   return { inbound: _inbound, outbound: _outbound };

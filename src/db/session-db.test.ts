@@ -154,4 +154,17 @@ describe('syncProcessingAcks — script-skip counter', () => {
 
     expect(status(inDb, 't1')).toBe('completed');
   });
+
+  it('script-skip:gated preserves its ack marker while completing the row', () => {
+    const { inDb, outDb } = freshPair();
+    seedTask(inDb, 't1', { prompt: 'p', script: 'x' });
+    ack(outDb, 't1', 'script-skip:gated');
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(status(inDb, 't1')).toBe('completed');
+    expect(
+      (outDb.prepare('SELECT status FROM processing_ack WHERE message_id = ?').get('t1') as { status: string }).status,
+    ).toBe('script-skip:gated');
+  });
 });

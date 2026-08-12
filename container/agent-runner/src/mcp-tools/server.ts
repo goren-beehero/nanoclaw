@@ -12,6 +12,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
+import { recordTaskRunEvent } from '../db/messages-out.js';
+import { getCurrentInReplyTo } from '../db/session-state.js';
 import type { McpToolDefinition } from './types.js';
 
 function log(msg: string): void {
@@ -20,6 +22,31 @@ function log(msg: string): void {
 
 const allTools: McpToolDefinition[] = [];
 const toolMap = new Map<string, McpToolDefinition>();
+
+export async function invokeToolWithDeliveryHealth(
+  name: string,
+  tool: McpToolDefinition,
+  args: Record<string, unknown>,
+) {
+  const isDeliveryTool = name === 'send_message' || name === 'send_file';
+  try {
+    const result = await tool.handler(args);
+    if (isDeliveryTool && result.isError === true) {
+      const detail = result.content.map((part) => ('text' in part ? part.text : part.type)).join(' ');
+      recordTaskRunEvent(getCurrentInReplyTo(), 'delivery_tool_error', `${name}: ${detail}`);
+    }
+    return result;
+  } catch (error) {
+    if (isDeliveryTool) {
+      recordTaskRunEvent(
+        getCurrentInReplyTo(),
+        'delivery_tool_error',
+        `${name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    throw error;
+  }
+}
 
 export function registerTools(tools: McpToolDefinition[]): void {
   for (const t of tools) {
@@ -45,7 +72,7 @@ export async function startMcpServer(): Promise<void> {
     if (!tool) {
       return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
     }
-    return tool.handler(args ?? {});
+    return invokeToolWithDeliveryHealth(name, tool, args ?? {});
   });
 
   const transport = new StdioServerTransport();
