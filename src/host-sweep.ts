@@ -205,10 +205,6 @@ async function sweepSession(session: Session): Promise<void> {
     // 1. Sync processing_ack → messages_in status
     if (outDb) {
       syncProcessingAcks(inDb, outDb);
-      // MODULE-HOOK:scheduling-delivery-health:start
-      const { auditSlackTaskDeliveryHealth } = await import('./modules/scheduling/delivery-health.js');
-      auditSlackTaskDeliveryHealth(inDb, outDb, { sessionId: session.id });
-      // MODULE-HOOK:scheduling-delivery-health:end
     }
 
     // 2. Wake a container if work is due and nothing is running. Ordered

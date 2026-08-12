@@ -6,7 +6,7 @@ import {
   markScriptSkipped,
   type MessageInRow,
 } from './db/messages-in.js';
-import { recordTaskRunEvent, writeMessageOut } from './db/messages-out.js';
+import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, getOutboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
@@ -272,7 +272,6 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log(`Query error: ${errMsg}`);
-      if (routing.taskRun) recordTaskRunEvent(routing.inReplyTo, 'provider_error', errMsg);
 
       // Stale/corrupt continuation recovery: ask the provider whether
       // this error means the stored continuation is unusable, and clear
@@ -359,7 +358,8 @@ export function appendSlackTaskDeliveryRequirement(prompt: string, messages: Tas
     origin.channel_type !== 'slack' ||
     !origin.platform_id ||
     messages.some(
-      (message) => message.channel_type !== origin.channel_type || message.platform_id !== origin.platform_id,
+      (message) =>
+        message.channel_type !== origin.channel_type || message.platform_id !== origin.platform_id,
     )
   ) {
     return prompt;
@@ -377,7 +377,7 @@ export function appendSlackTaskDeliveryRequirement(prompt: string, messages: Tas
     `- For a requested file or artifact, call \`mcp__nanoclaw__send_file\` with \`to=\"${escapePromptXml(destination.name)}\"\` and the accompanying text. That file delivery satisfies this requirement; do not also call send_message unless the task explicitly requests a separate text message.\n` +
     '- Make exactly the delivery or deliveries requested by the task; do not add a duplicate acknowledgement.\n' +
     'Do not treat final output as delivered; final output is only the internal task log.\n' +
-    "Deliver only to this task's originating Slack thread.</system>"
+    'Deliver only to this task\'s originating Slack thread.</system>'
   );
 }
 
@@ -528,9 +528,6 @@ export async function processQuery(
 
   try {
     for await (const event of query.events) {
-      if (routing.taskRun && routing.inReplyTo && event.type === 'error') {
-        recordTaskRunEvent(routing.inReplyTo, 'provider_error', event.message);
-      }
       handleEvent(event, routing);
       touchHeartbeat();
 
@@ -544,9 +541,6 @@ export async function processQuery(
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
       } else if (event.type === 'result') {
-        if (routing.taskRun && routing.inReplyTo && event.isError === true) {
-          recordTaskRunEvent(routing.inReplyTo, 'provider_error', event.text ?? 'Provider returned an error result');
-        }
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for
