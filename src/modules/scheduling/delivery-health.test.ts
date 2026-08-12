@@ -75,6 +75,29 @@ describe('Slack scheduled-task delivery health audit', () => {
     expect(audit()).toMatchObject([{ type: 'failure', classification: 'delivery_tool_error' }]);
   });
 
+  it('classifies an unrecovered provider failure from structured evidence', () => {
+    seedTask();
+    outDb
+      .prepare(
+        `INSERT INTO task_run_events (id, message_id, event_type, occurred_at, detail)
+         VALUES ('e1', 'task-1', 'provider_error', ?, 'billing error')`,
+      )
+      .run(new Date(NOW - 7 * 60_000).toISOString());
+    expect(audit()).toMatchObject([{ type: 'failure', classification: 'provider_error' }]);
+  });
+
+  it('classifies an outbound row routed away from the captured origin as unknown', () => {
+    seedTask();
+    outDb
+      .prepare(
+        `INSERT INTO messages_out
+           (id, seq, in_reply_to, timestamp, kind, platform_id, channel_type, thread_id, content)
+         VALUES ('out-wrong', 1, 'task-1', ?, 'chat', 'C-OTHER', 'slack', 'thread-2', '{"text":"wrong route"}')`,
+      )
+      .run(new Date(NOW - 5 * 60_000).toISOString());
+    expect(audit()).toMatchObject([{ type: 'failure', classification: 'unknown' }]);
+  });
+
   it('treats an error followed by acknowledged delivery as recovered telemetry', () => {
     seedTask();
     seedOutbound();
