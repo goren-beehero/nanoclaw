@@ -11,6 +11,7 @@ import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { extractSlackForwardedMessages } from './slack-forwarded-context.js';
+import { listSlackChannelResources } from './slack-resources.js';
 
 registerChannelAdapter('slack', {
   factory: () => {
@@ -51,6 +52,9 @@ registerChannelAdapter('slack', {
       const rawText = (root.raw as { text?: unknown } | undefined)?.text;
       return { userId: root.author.userId, text: typeof rawText === 'string' ? rawText : (root.text ?? '') };
     };
+    bridge.listResources = (platformId: string) => listSlackChannelResources(env.SLACK_BOT_TOKEN!, platformId);
+    bridge.listContextResources = (platformId: string) =>
+      listSlackChannelResources(env.SLACK_BOT_TOKEN!, platformId, fetch, { includeFiles: false });
     return bridge;
   },
 });

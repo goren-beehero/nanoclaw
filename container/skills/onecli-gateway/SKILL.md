@@ -42,6 +42,25 @@ Standard HTTP clients (curl, fetch, requests, axios, Go net/http, git) all
 honor the `HTTPS_PROXY` environment variable automatically. You do not need
 to set any auth headers.
 
+## Google Drive Shared Drives
+
+Google Drive files can live either in a user's My Drive or in a shared drive.
+A file shared directly from another user's My Drive works with the ordinary
+Drive API request, but shared-drive items require explicit application support.
+
+For Drive API v3 reads:
+
+- Add `supportsAllDrives=true` to every `files.get` request.
+- Add both `supportsAllDrives=true` and `includeItemsFromAllDrives=true` to
+  every `files.list` request.
+- When searching one known shared drive, also use `corpora=drive` and its
+  `driveId`.
+- A `404 File not found` from `files.get` does not prove absence until the
+  request has been retried with `supportsAllDrives=true`.
+
+These flags are safe for My Drive files too, so include them by default rather
+than branching after a failure.
+
 ## Credential Stubs for MCP Servers
 
 Some MCP servers need local credential files to start. Stubs for connected

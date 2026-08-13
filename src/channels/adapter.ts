@@ -121,6 +121,25 @@ export interface ConversationInfo {
   isGroup: boolean;
 }
 
+/** A read-only resource discoverable from the current messaging conversation. */
+export interface ChannelResource {
+  id: string;
+  title: string;
+  kind: 'folder' | 'bookmark' | 'file';
+  url?: string;
+  parentId?: string;
+  parentTitle?: string;
+  mimeType?: string;
+  externalType?: string;
+}
+
+/** Bounded metadata listing for resources visible in one messaging conversation. */
+export interface ChannelResourceListing {
+  channelName?: string;
+  resources: ChannelResource[];
+  warnings?: string[];
+}
+
 /** Wiring/mg defaults for one conversation context (DM vs group/channel). */
 export interface ChannelContextDefaults {
   /** Default engage_mode for wirings created in this context. */
@@ -216,6 +235,14 @@ export interface ChannelAdapter {
   setTyping?(platformId: string, threadId: string | null): Promise<void>;
   syncConversations?(): Promise<ConversationInfo[]>;
   resolveChannelName?(platformId: string): Promise<string | null>;
+  /** List read-only resources in this exact conversation. The host supplies platformId. */
+  listResources?(platformId: string): Promise<ChannelResourceListing>;
+  /**
+   * List compact resource metadata suitable for first-turn context. Unlike
+   * listResources, implementations should omit large/noisy inventories such
+   * as every uploaded file. The host still supplies the exact platformId.
+   */
+  listContextResources?(platformId: string): Promise<ChannelResourceListing>;
 
   /** Resolve the immutable platform user ID of a thread's root author. */
   resolveThreadRootUserId?(platformId: string, threadId: string): Promise<string | null>;

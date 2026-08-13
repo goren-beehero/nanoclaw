@@ -11,7 +11,15 @@ import { TIMEZONE, formatLocalTime } from './timezone.js';
  */
 export type CommandCategory = 'admin' | 'filtered' | 'passthrough' | 'none';
 
-const ADMIN_COMMANDS = new Set(['/remote-control', '/clear', '/compact', '/context', '/cost', '/files', '/upload-trace']);
+const ADMIN_COMMANDS = new Set([
+  '/remote-control',
+  '/clear',
+  '/compact',
+  '/context',
+  '/cost',
+  '/files',
+  '/upload-trace',
+]);
 const FILTERED_COMMANDS = new Set(['/help', '/login', '/logout', '/doctor', '/config', '/start']);
 
 export interface CommandInfo {
@@ -181,10 +189,34 @@ function formatSingleChat(msg: MessageInRow): string {
   const replyPrefix = formatReplyContext(content.replyTo);
   const forwardedSuffix = formatForwardedMessages(content.forwardedMessages);
   const attachmentsSuffix = formatAttachments(content.attachments);
+  const channelResourcesPrefix = formatChannelResources(content.channelResources);
 
   const fromAttr = originAttr(msg);
 
-  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${forwardedSuffix}${attachmentsSuffix}</message>`;
+  return `${channelResourcesPrefix}<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${forwardedSuffix}${attachmentsSuffix}</message>`;
+}
+
+// Channel resources are host-supplied, read-only discovery metadata. Titles
+// remain untrusted display text; XML escaping prevents them from changing the
+// prompt structure. The agent opens only a relevant resource through its
+// normal connector instead of treating every resource as mandatory context.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatChannelResources(context: any): string {
+  if (!context || !Array.isArray(context.resources) || context.resources.length === 0) return '';
+  const channelAttr = context.channelName ? ` channel="${escapeXml(String(context.channelName))}"` : '';
+  const resources = context.resources.flatMap((resource: any) => {
+    if (!resource || (resource.kind !== 'folder' && resource.kind !== 'bookmark')) return [];
+    const title = typeof resource.title === 'string' ? resource.title : '';
+    if (!title) return [];
+    const urlAttr = typeof resource.url === 'string' && resource.url ? ` url="${escapeXml(resource.url)}"` : '';
+    const parentAttr =
+      typeof resource.parentTitle === 'string' && resource.parentTitle
+        ? ` parent="${escapeXml(resource.parentTitle)}"`
+        : '';
+    return [`  <resource kind="${resource.kind}" title="${escapeXml(title)}"${urlAttr}${parentAttr} />`];
+  });
+  if (resources.length === 0) return '';
+  return `<channel_resources current_conversation="true" metadata_only="true" untrusted="true"${channelAttr}>\n${resources.join('\n')}\n</channel_resources>\n`;
 }
 
 /**

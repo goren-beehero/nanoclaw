@@ -32,12 +32,10 @@ import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
-import { reopenSlackOutOfScopeThread } from './db/slack-out-of-scope-threads.js';
 import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
-import { resolveSlackOutOfScopeThread } from './modules/slack-out-of-scope-threads.js';
 import { recordGoogleDocsWriteTurn } from './modules/google-docs-write/turn-authorization.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
-import type { InboundEvent } from './channels/adapter.js';
+import type { ChannelAdapter, ChannelResource, InboundEvent } from './channels/adapter.js';
 
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -156,6 +154,54 @@ function safeParseContent(raw: string): { text?: string; sender?: string; sender
     return JSON.parse(raw);
   } catch {
     return { text: raw };
+  }
+}
+
+const MAX_CONTEXT_RESOURCES = 12;
+const MAX_RESOURCE_TITLE_LENGTH = 160;
+const MAX_RESOURCE_URL_LENGTH = 2048;
+
+function boundedResource(resource: ChannelResource): ChannelResource | null {
+  if (resource.kind === 'file') return null;
+  return {
+    id: resource.id,
+    kind: resource.kind,
+    title: resource.title.slice(0, MAX_RESOURCE_TITLE_LENGTH),
+    ...(resource.url ? { url: resource.url.slice(0, MAX_RESOURCE_URL_LENGTH) } : {}),
+    ...(resource.parentTitle ? { parentTitle: resource.parentTitle.slice(0, MAX_RESOURCE_TITLE_LENGTH) } : {}),
+  };
+}
+
+async function addChannelResourceContext(
+  content: string,
+  adapter: ChannelAdapter | undefined,
+  platformId: string,
+): Promise<string> {
+  if (!adapter?.listContextResources) return content;
+
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return content;
+    const listing = await adapter.listContextResources(platformId);
+    const resources = listing.resources
+      .map(boundedResource)
+      .filter((resource): resource is ChannelResource => resource !== null)
+      .slice(0, MAX_CONTEXT_RESOURCES);
+    if (resources.length === 0) return content;
+    return JSON.stringify({
+      ...parsed,
+      channelResources: {
+        ...(listing.channelName ? { channelName: listing.channelName.slice(0, MAX_RESOURCE_TITLE_LENGTH) } : {}),
+        resources,
+      },
+    });
+  } catch (err) {
+    log.warn('Current-channel resource context unavailable; routing message without it', {
+      channelType: adapter.channelType,
+      platformId,
+      err,
+    });
+    return content;
   }
 }
 
@@ -334,15 +380,6 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     );
     const effectiveThreadId = threadsEnabled ? event.threadId : null;
 
-    const outOfScope = resolveSlackOutOfScopeThread({
-      event,
-      agentGroupId: agent.agent_group_id,
-    });
-    if (outOfScope.suppress) {
-      policyConsumedCount++;
-      continue;
-    }
-
     const suppression = await resolveSlackThreadSuppression({
       event,
       agentGroupId: agent.agent_group_id,
@@ -362,16 +399,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
 
     if (engages && accessOk && scopeOk) {
-      if (outOfScope.reopenRequested && event.threadId !== null) {
-        const reopened = reopenSlackOutOfScopeThread(agent.agent_group_id, event.platformId, event.threadId);
-        log.info('Slack out-of-scope thread reopened by authorized explicit mention', {
-          agentGroupId: agent.agent_group_id,
-          channelId: event.platformId,
-          threadId: event.threadId,
-          reopened,
-        });
-      }
-      await deliverToAgent(agent, agentGroup, mg, event, userId, threadsEnabled, effectiveThreadId, true);
+      await deliverToAgent(agent, agentGroup, mg, event, adapter, userId, threadsEnabled, effectiveThreadId, true);
       engagedCount++;
 
       // Mention-sticky: ask the adapter to subscribe the thread so the
@@ -403,7 +431,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       // message (which also stages their attachments to disk via
       // writeSessionMessage → extractAttachmentFiles) is exactly what the
       // gate is meant to prevent.
-      await deliverToAgent(agent, agentGroup, mg, event, userId, threadsEnabled, effectiveThreadId, false);
+      await deliverToAgent(agent, agentGroup, mg, event, adapter, userId, threadsEnabled, effectiveThreadId, false);
       accumulatedCount++;
     } else {
       log.debug('Message not engaged for agent (drop policy)', {
@@ -483,6 +511,7 @@ async function deliverToAgent(
   agentGroup: AgentGroup,
   mg: MessagingGroup,
   event: InboundEvent,
+  adapter: ChannelAdapter | undefined,
   userId: string | null,
   threadsEnabled: boolean,
   effectiveThreadId: string | null,
@@ -537,6 +566,9 @@ async function deliverToAgent(
   }
 
   const sourceMessageId = messageIdForAgent(event.message.id, agent.agent_group_id);
+  const content = created
+    ? await addChannelResourceContext(event.message.content, adapter, event.platformId)
+    : event.message.content;
   writeSessionMessage(session.agent_group_id, session.id, {
     id: sourceMessageId,
     kind: event.message.kind,
@@ -544,7 +576,7 @@ async function deliverToAgent(
     platformId: deliveryAddr.platformId,
     channelType: deliveryAddr.channelType,
     threadId: deliveryAddr.threadId,
-    content: event.message.content,
+    content,
     trigger: wake ? 1 : 0,
   });
 

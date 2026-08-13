@@ -16,3 +16,4 @@ import './approvals.js';
 import './sessions.js';
 import './tasks.js';
 import './bobi-guardrails.js';
+import './channel-resources.js';
