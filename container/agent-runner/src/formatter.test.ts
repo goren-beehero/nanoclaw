@@ -118,6 +118,76 @@ describe('multi-message chat batches', () => {
   });
 });
 
+describe('canonical link context', () => {
+  it('preserves link-free chat-sdk messages without adding link metadata', () => {
+    const timestamp = '2026-06-15T12:00:00.000Z';
+    insertMessage('m1', 'chat-sdk', { sender: 'Alice', text: 'ordinary message without a link' }, { timestamp });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result).toBe(
+      `<context timezone="${TIMEZONE}" />\n` +
+        `<message sender="Alice" time="${formatLocalTime(timestamp, TIMEZONE)}">ordinary message without a link</message>`,
+    );
+    expect(result).not.toContain('<links');
+    expect(result).not.toContain('<link ');
+  });
+
+  it('adds a full canonical URL when the visible Slack label is shortened', () => {
+    const url = 'https://docs.google.com/spreadsheets/d/1iVDUQKvNVxuehFFfVX2rCd3Z2eFmOJirL-ftH57oTO8/edit?usp=sharing';
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Alice',
+      text: 'docs.google.com/spreadsheets/d/1iVDUQKvNVxu…/edit?usp=sharing',
+      links: [{ url }],
+    });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('docs.google.com/spreadsheets/d/1iVDUQKvNVxu…/edit?usp=sharing');
+    expect(result).toContain(`<link url="${url.replace('&', '&amp;')}" />`);
+  });
+
+  it('preserves multiple canonical URLs in order and deduplicates repeats', () => {
+    const first = 'https://example.com/first?x=1&y=2';
+    const second = 'https://example.com/second';
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Alice',
+      text: 'first…\nsecond…',
+      links: [{ url: first }, { url: second }, { url: first }],
+    });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result.match(/<link url=/g)?.length).toBe(2);
+    expect(result.indexOf('https://example.com/first?x=1&amp;y=2')).toBeLessThan(
+      result.indexOf('https://example.com/second'),
+    );
+  });
+
+  it('does not repeat a canonical URL already present in full in the message text', () => {
+    const url = 'https://example.com/already-visible';
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Alice',
+      text: `Please inspect ${url}`,
+      links: [{ url }],
+    });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain(`Please inspect ${url}`);
+    expect(result).not.toContain('<links');
+    expect(result.split(url).length - 1).toBe(1);
+  });
+
+  it('ignores malformed link entries without changing the user message', () => {
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Alice',
+      text: 'keep this intact',
+      links: [null, {}, { url: '' }, { url: 42 }],
+    });
+
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('>keep this intact</message>');
+    expect(result).not.toContain('<links');
+  });
+});
+
 describe('current-channel resource context', () => {
   it('renders escaped bookmark metadata before the user message', () => {
     insertMessage('m1', 'chat', {
