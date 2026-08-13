@@ -118,8 +118,8 @@ describe('multi-message chat batches', () => {
   });
 });
 
-describe('canonical link context', () => {
-  it('preserves link-free chat-sdk messages without adding link metadata', () => {
+describe('structured link restoration', () => {
+  it('preserves link-free chat-sdk messages exactly', () => {
     const timestamp = '2026-06-15T12:00:00.000Z';
     insertMessage('m1', 'chat-sdk', { sender: 'Alice', text: 'ordinary message without a link' }, { timestamp });
 
@@ -128,37 +128,54 @@ describe('canonical link context', () => {
       `<context timezone="${TIMEZONE}" />\n` +
         `<message sender="Alice" time="${formatLocalTime(timestamp, TIMEZONE)}">ordinary message without a link</message>`,
     );
-    expect(result).not.toContain('<links');
-    expect(result).not.toContain('<link ');
   });
 
-  it('adds a full canonical URL when the visible Slack label is shortened', () => {
+  it('restores a full URL where the visible Slack label is shortened', () => {
     const url = 'https://docs.google.com/spreadsheets/d/1iVDUQKvNVxuehFFfVX2rCd3Z2eFmOJirL-ftH57oTO8/edit?usp=sharing';
+    const label = 'docs.google.com/spreadsheets/d/1iVDUQKvNVxu…/edit?usp=sharing';
     insertMessage('m1', 'chat-sdk', {
       sender: 'Alice',
-      text: 'docs.google.com/spreadsheets/d/1iVDUQKvNVxu…/edit?usp=sharing',
+      text: label,
       links: [{ url }],
+      formatted: {
+        type: 'root',
+        children: [
+          {
+            type: 'paragraph',
+            children: [{ type: 'link', url, children: [{ type: 'text', value: label }] }],
+          },
+        ],
+      },
     });
 
     const result = formatMessages(getPendingMessages());
-    expect(result).toContain('docs.google.com/spreadsheets/d/1iVDUQKvNVxu…/edit?usp=sharing');
-    expect(result).toContain(`<link url="${url.replace('&', '&amp;')}" />`);
+    expect(result).not.toContain(label);
+    expect(result).toContain(`>${url.replace('&', '&amp;')}</message>`);
+    expect(result).not.toContain('canonical_destinations');
   });
 
-  it('preserves multiple canonical URLs in order and deduplicates repeats', () => {
+  it('restores multiple full URLs in order', () => {
     const first = 'https://example.com/first?x=1&y=2';
     const second = 'https://example.com/second';
     insertMessage('m1', 'chat-sdk', {
       sender: 'Alice',
       text: 'first…\nsecond…',
       links: [{ url: first }, { url: second }, { url: first }],
+      formatted: {
+        type: 'root',
+        children: [
+          { type: 'link', url: first, children: [{ type: 'text', value: 'first…' }] },
+          { type: 'text', value: '\n' },
+          { type: 'link', url: second, children: [{ type: 'text', value: 'second…' }] },
+        ],
+      },
     });
 
     const result = formatMessages(getPendingMessages());
-    expect(result.match(/<link url=/g)?.length).toBe(2);
     expect(result.indexOf('https://example.com/first?x=1&amp;y=2')).toBeLessThan(
       result.indexOf('https://example.com/second'),
     );
+    expect(result.split('https://example.com/first?x=1&amp;y=2').length - 1).toBe(1);
   });
 
   it('does not repeat a canonical URL already present in full in the message text', () => {
@@ -167,11 +184,14 @@ describe('canonical link context', () => {
       sender: 'Alice',
       text: `Please inspect ${url}`,
       links: [{ url }],
+      formatted: {
+        type: 'root',
+        children: [{ type: 'link', url, children: [{ type: 'text', value: url }] }],
+      },
     });
 
     const result = formatMessages(getPendingMessages());
     expect(result).toContain(`Please inspect ${url}`);
-    expect(result).not.toContain('<links');
     expect(result.split(url).length - 1).toBe(1);
   });
 
@@ -184,7 +204,6 @@ describe('canonical link context', () => {
 
     const result = formatMessages(getPendingMessages());
     expect(result).toContain('>keep this intact</message>');
-    expect(result).not.toContain('<links');
   });
 });
 

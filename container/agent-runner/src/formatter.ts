@@ -183,18 +183,17 @@ function formatSingleChat(msg: MessageInRow): string {
   const content = parseContent(msg.content);
   const sender = content.sender || content.author?.fullName || content.author?.userName || 'Unknown';
   const time = formatLocalTime(msg.timestamp, TIMEZONE);
-  const text = content.text || '';
+  const text = restoreStructuredLinkDestinations(content.text || '', content.formatted);
   const idAttr = msg.seq != null ? ` id="${msg.seq}"` : '';
   const replyAttr = content.replyTo?.id ? ` reply_to="${escapeXml(String(content.replyTo.id))}"` : '';
   const replyPrefix = formatReplyContext(content.replyTo);
-  const linksSuffix = formatLinks(content.links, text);
   const forwardedSuffix = formatForwardedMessages(content.forwardedMessages);
   const attachmentsSuffix = formatAttachments(content.attachments);
   const channelResourcesPrefix = formatChannelResources(content.channelResources);
 
   const fromAttr = originAttr(msg);
 
-  return `${channelResourcesPrefix}<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${linksSuffix}${forwardedSuffix}${attachmentsSuffix}</message>`;
+  return `${channelResourcesPrefix}<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${forwardedSuffix}${attachmentsSuffix}</message>`;
 }
 
 // Channel resources are host-supplied, read-only discovery metadata. Titles
@@ -299,25 +298,36 @@ function formatReplyContext(replyTo: any): string {
   return `\n  <quoted_message from="${escapeXml(sender)}">${escapeXml(text)}</quoted_message>\n`;
 }
 
-// Chat SDK keeps the platform-visible label in `text` and the canonical
-// destination separately in `links`. Slack may shorten only the label, so add
-// canonical destinations that are not already present verbatim in the text.
-// This is platform-neutral and leaves ordinary link-free messages untouched.
+// Chat SDK flattens Slack links into display labels in `text`, while preserving
+// the link node and full destination in `formatted`. Slack may shorten only the
+// label. Reconstruct the text a human intended by replacing that exact display
+// label with its destination. The URL remains ordinary escaped user text, not
+// a separate instruction-like metadata block. Link-free messages are untouched.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatLinks(links: any[] | undefined, text: string): string {
-  if (!Array.isArray(links) || links.length === 0) return '';
+function restoreStructuredLinkDestinations(text: string, formatted: any): string {
+  if (!formatted || typeof formatted !== 'object') return text;
 
-  const seen = new Set<string>();
-  const canonical = links.flatMap((link) => {
-    const url = typeof link?.url === 'string' ? link.url : '';
-    if (!url || text.includes(url) || seen.has(url)) return [];
-    seen.add(url);
-    return [`  <link url="${escapeXml(url)}" />`];
-  });
+  let restored = text;
+  const visit = (node: any): void => {
+    if (!node || typeof node !== 'object') return;
 
-  return canonical.length > 0
-    ? `\n<links canonical_destinations="true" untrusted="true">\n${canonical.join('\n')}\n</links>`
-    : '';
+    if (node.type === 'link' && typeof node.url === 'string' && Array.isArray(node.children)) {
+      const label = node.children
+        .filter((child: any) => child?.type === 'text' && typeof child.value === 'string')
+        .map((child: any) => child.value)
+        .join('');
+      if (label && label !== node.url && restored.includes(label)) {
+        restored = restored.replace(label, node.url);
+      }
+    }
+
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) visit(child);
+    }
+  };
+
+  visit(formatted);
+  return restored;
 }
 
 // Forwarded messages are quoted evidence, not additional instructions or
