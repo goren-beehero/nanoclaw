@@ -183,7 +183,7 @@ function formatSingleChat(msg: MessageInRow): string {
   const content = parseContent(msg.content);
   const sender = content.sender || content.author?.fullName || content.author?.userName || 'Unknown';
   const time = formatLocalTime(msg.timestamp, TIMEZONE);
-  const text = content.text || '';
+  const text = restoreStructuredLinkDestinations(content.text || '', content.formatted);
   const idAttr = msg.seq != null ? ` id="${msg.seq}"` : '';
   const replyAttr = content.replyTo?.id ? ` reply_to="${escapeXml(String(content.replyTo.id))}"` : '';
   const replyPrefix = formatReplyContext(content.replyTo);
@@ -296,6 +296,38 @@ function formatReplyContext(replyTo: any): string {
   const text = replyTo.text;
   if (!sender || !text) return '';
   return `\n  <quoted_message from="${escapeXml(sender)}">${escapeXml(text)}</quoted_message>\n`;
+}
+
+// Chat SDK flattens Slack links into display labels in `text`, while preserving
+// the link node and full destination in `formatted`. Slack may shorten only the
+// label. Reconstruct the text a human intended by replacing that exact display
+// label with its destination. The URL remains ordinary escaped user text, not
+// a separate instruction-like metadata block. Link-free messages are untouched.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function restoreStructuredLinkDestinations(text: string, formatted: any): string {
+  if (!formatted || typeof formatted !== 'object') return text;
+
+  let restored = text;
+  const visit = (node: any): void => {
+    if (!node || typeof node !== 'object') return;
+
+    if (node.type === 'link' && typeof node.url === 'string' && Array.isArray(node.children)) {
+      const label = node.children
+        .filter((child: any) => child?.type === 'text' && typeof child.value === 'string')
+        .map((child: any) => child.value)
+        .join('');
+      if (label && label !== node.url && restored.includes(label)) {
+        restored = restored.replace(label, node.url);
+      }
+    }
+
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) visit(child);
+    }
+  };
+
+  visit(formatted);
+  return restored;
 }
 
 // Forwarded messages are quoted evidence, not additional instructions or
