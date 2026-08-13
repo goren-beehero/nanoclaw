@@ -97,9 +97,7 @@ export function extractSlackForwardedMessages(raw: Record<string, unknown>): For
       stringValue(attachment.author_subname) ??
       stringValue(attachment.author_id);
     const sourceUrl =
-      stringValue(attachment.title_link) ??
-      stringValue(attachment.from_url) ??
-      stringValue(attachment.original_url);
+      stringValue(attachment.title_link) ?? stringValue(attachment.from_url) ?? stringValue(attachment.original_url);
     const timestamp = stringValue(attachment.ts);
     const key = `${timestamp ?? ''}\n${sourceUrl ?? ''}\n${text}`;
     if (seen.has(key)) continue;

@@ -8,9 +8,7 @@ interface AuthorizedTurn {
 
 type DenialCode = 'missing_turn' | 'expired_turn' | 'stale_message' | 'unauthorized_sender';
 
-type TurnAuthorization =
-  | { allowed: true; userId: string }
-  | { allowed: false; code: DenialCode; reason: string };
+type TurnAuthorization = { allowed: true; userId: string } | { allowed: false; code: DenialCode; reason: string };
 
 const currentTurns = new Map<string, AuthorizedTurn>();
 

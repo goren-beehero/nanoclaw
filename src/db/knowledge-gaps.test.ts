@@ -39,10 +39,7 @@ describe('knowledge gap storage', () => {
   });
 
   it('deduplicates registration history aliases', () => {
-    const keys = [
-      'gateway registry deregistration audit trail',
-      'historical gateway registration ledger',
-    ];
+    const keys = ['gateway registry deregistration audit trail', 'historical gateway registration ledger'];
     expect(new Set(keys.map((key) => knowledgeGapFingerprint('missing_capability', key))).size).toBe(1);
   });
 
