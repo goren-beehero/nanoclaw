@@ -30,6 +30,7 @@ import {
 } from '../../db/sessions.js';
 import type { ChannelDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
+import { resolveOneCliParentAgentGroupId } from '../../onecli-agent-identity.js';
 import type { PendingApproval } from '../../types.js';
 
 export const ONECLI_ACTION = 'onecli_credential';
@@ -113,10 +114,11 @@ export function stopOneCLIApprovalHandler(): void {
 async function handleRequest(request: ApprovalRequest): Promise<Decision> {
   if (!adapterRef) return 'deny';
 
-  // Originating agent group is carried on the request via OneCLI's agent
-  // identifier (set by container-runner.ts to agentGroup.id). Use it as
-  // the scope for approver selection: admin @ group → global admin → owner.
-  const originGroup = request.agent.externalId ? getAgentGroup(request.agent.externalId) : undefined;
+  // Channel-scoped OneCLI children still route approvals through their parent
+  // NanoClaw agent group.
+  const externalId = request.agent.externalId;
+  const parentGroupId = externalId ? resolveOneCliParentAgentGroupId(externalId) : undefined;
+  const originGroup = externalId ? (getAgentGroup(externalId) ?? getAgentGroup(parentGroupId ?? '')) : undefined;
   const agentGroupId = originGroup?.id ?? null;
   const approvers = pickApprover(agentGroupId);
   if (approvers.length === 0) {

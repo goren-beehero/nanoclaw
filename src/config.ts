@@ -18,6 +18,7 @@ const envConfig = readEnvFile([
   'NANOCLAW_EGRESS_LOCKDOWN',
   'NANOCLAW_EGRESS_NETWORK',
   'ONECLI_GATEWAY_CONTAINER',
+  'NANOCLAW_CHANNEL_SCOPED_ONECLI_AGENT_GROUPS',
   'NANOCLAW_GOOGLE_DOCS_WRITE_USERS',
   'NANOCLAW_GOOGLE_DOCS_WRITE_AGENT_GROUPS',
   'NANOCLAW_GOOGLE_DOCS_WRITER_IDENTIFIER',
@@ -98,6 +99,11 @@ function csvSet(value: string | undefined): ReadonlySet<string> {
       .filter(Boolean),
   );
 }
+
+/** Agent groups whose OneCLI credential identity is isolated per messaging group. */
+export const CHANNEL_SCOPED_ONECLI_AGENT_GROUPS = csvSet(
+  process.env.NANOCLAW_CHANNEL_SCOPED_ONECLI_AGENT_GROUPS || envConfig.NANOCLAW_CHANNEL_SCOPED_ONECLI_AGENT_GROUPS,
+);
 
 /** Host-enforced Google Docs mutation policy. Empty allowlists disable writes. */
 export const GOOGLE_DOCS_WRITE_USERS = csvSet(

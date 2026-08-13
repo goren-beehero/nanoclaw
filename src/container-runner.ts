@@ -34,6 +34,7 @@ import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
+import { resolveOneCliAgentIdentity } from './onecli-agent-identity.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
 import './providers/index.js';
@@ -145,9 +146,7 @@ async function spawnContainer(session: Session): Promise<void> {
 
   const mounts = buildMounts(agentGroup, session, containerConfig, provider, contribution);
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
-  // OneCLI agent identifier is always the agent group id — stable across
-  // sessions and reversible via getAgentGroup() for approval routing.
-  const agentIdentifier = agentGroup.id;
+  const onecliAgent = resolveOneCliAgentIdentity(agentGroup.id, session.messaging_group_id);
   const args = await buildContainerArgs(
     mounts,
     containerName,
@@ -155,7 +154,8 @@ async function spawnContainer(session: Session): Promise<void> {
     containerConfig,
     provider,
     contribution,
-    agentIdentifier,
+    onecliAgent.identifier,
+    onecliAgent.parentIdentifier,
   );
 
   log.info('Spawning container', { sessionId: session.id, agentGroup: agentGroup.name, containerName });
@@ -439,6 +439,7 @@ async function buildContainerArgs(
   _provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
+  agentParentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
 
@@ -496,7 +497,11 @@ async function buildContainerArgs(
   // the throw, leaves the inbound message pending, and the next sweep tick
   // retries.
   if (agentIdentifier) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+    await onecli.ensureAgent({
+      name: agentGroup.name,
+      identifier: agentIdentifier,
+      ...(agentParentIdentifier ? { parentIdentifier: agentParentIdentifier } : {}),
+    });
   }
   const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
   if (!onecliApplied) {
