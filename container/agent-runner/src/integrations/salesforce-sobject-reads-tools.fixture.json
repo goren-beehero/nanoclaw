@@ -1,0 +1,38 @@
+[
+  {
+    "name": "getObjectSchema",
+    "description": "Returns Salesforce schema information. Omit object-name for the compact object index.",
+    "required": [],
+    "optional": ["object-name"]
+  },
+  {
+    "name": "soqlQuery",
+    "description": "Executes a bounded read-only SOQL SELECT query.",
+    "required": ["query"],
+    "optional": []
+  },
+  {
+    "name": "find",
+    "description": "Executes a bounded SOSL FIND search across Salesforce objects.",
+    "required": ["search"],
+    "optional": []
+  },
+  {
+    "name": "getUserInfo",
+    "description": "Returns the authenticated Salesforce user identity and locale context.",
+    "required": [],
+    "optional": []
+  },
+  {
+    "name": "listRecentSobjectRecords",
+    "description": "Returns recently viewed records for one Salesforce object type.",
+    "required": ["sobject-name"],
+    "optional": []
+  },
+  {
+    "name": "getRelatedRecords",
+    "description": "Returns bounded child records for a Salesforce parent record relationship.",
+    "required": ["sobject-name", "id", "relationship-path"],
+    "optional": []
+  }
+]

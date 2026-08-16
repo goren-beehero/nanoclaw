@@ -1,0 +1,30 @@
+services:
+  adapter:
+    image: ${SALESFORCE_ADAPTER_IMAGE:?set an immutable image digest}
+    container_name: bobi-salesforce-readonly-adapter
+    restart: unless-stopped
+    read_only: true
+    user: '65532:65532'
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      SALESFORCE_ORIGIN: ${SALESFORCE_ORIGIN:?set exact My Domain origin}
+      SALESFORCE_API_VERSION: ${SALESFORCE_API_VERSION:-v65.0}
+      TOKEN_MAX_AGE_MS: ${TOKEN_MAX_AGE_MS:-600000}
+      MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS:-8}
+      HTTPS_PROXY: ${HTTPS_PROXY:?set adapter-scoped OneCLI proxy URL}
+      NODE_EXTRA_CA_CERTS: /run/onecli/ca.pem
+    volumes:
+      - ${ONECLI_CA_PATH:?set adapter-scoped CA path}:/run/onecli/ca.pem:ro
+    networks:
+      - salesforce-private
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+
+networks:
+  salesforce-private:
+    name: bobi-salesforce-private
+    internal: false

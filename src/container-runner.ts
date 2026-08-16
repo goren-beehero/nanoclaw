@@ -23,6 +23,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { materializeContainerJson } from './container-config.js';
+import { containerNetworkArgs, loadContainerNetworkAttachments } from './container-network-attachments.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
@@ -462,11 +463,16 @@ async function buildContainerArgs(
 
   // Egress lockdown when enabled — throws if it can't be established, aborting
   // the spawn rather than running with open egress. Otherwise the host gateway.
+  const privateNetworks = loadContainerNetworkAttachments(agentGroup.id);
   if (ensureEgressNetwork()) {
+    if (privateNetworks.length > 0) {
+      throw new Error('Private container attachments are incompatible with egress lockdown');
+    }
     args.push(...egressNetworkArgs());
     log.info('Egress lockdown active', { containerName, network: EGRESS_NETWORK });
   } else {
     args.push(...hostGatewayArgs());
+    args.push(...containerNetworkArgs(privateNetworks));
   }
 
   // User mapping
