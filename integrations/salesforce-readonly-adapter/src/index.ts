@@ -39,6 +39,9 @@ const server = http.createServer(async (request, response) => {
     const ready = await adapter.readiness();
     return send(response, ready ? 200 : 503, { ok: ready });
   }
+  if (request.method === 'GET' && request.url === '/metrics') {
+    return send(response, 200, { ok: true, metrics: adapter.metrics() });
+  }
   const match = request.method === 'POST' ? /^\/v1\/tools\/([A-Za-z]+)$/.exec(request.url || '') : null;
   if (!match) return send(response, 404, { ok: false, error: 'FORBIDDEN_OPERATION' });
   const operation = match[1];

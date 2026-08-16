@@ -29,10 +29,28 @@ export interface TokenValue {
   generation: number;
 }
 
+export interface TokenMetrics {
+  tokenAcquisitions: number;
+  tokenGenerations: number;
+  tokenCacheHits: number;
+  tokenCoalescedWaiters: number;
+  tokenInvalidations: number;
+}
+
+export interface AdapterMetrics extends TokenMetrics {
+  salesforce401Retries: number;
+  activeRequests: number;
+  maxConcurrentRequests: number;
+}
+
 export class TokenManager {
   private current: { accessToken: string; generation: number; issuedAt: number } | undefined;
   private pending: Promise<TokenValue> | undefined;
   private generation = 0;
+  private acquisitions = 0;
+  private cacheHits = 0;
+  private coalescedWaiters = 0;
+  private invalidations = 0;
 
   constructor(
     private readonly acquireToken: () => Promise<string>,
@@ -42,9 +60,13 @@ export class TokenManager {
 
   async get(): Promise<TokenValue> {
     if (this.current && this.now() - this.current.issuedAt < this.maxAgeMs) {
+      this.cacheHits += 1;
       return { accessToken: this.current.accessToken, generation: this.current.generation };
     }
-    if (this.pending) return this.pending;
+    if (this.pending) {
+      this.coalescedWaiters += 1;
+      return this.pending;
+    }
     this.pending = this.refresh();
     try {
       return await this.pending;
@@ -54,12 +76,26 @@ export class TokenManager {
   }
 
   invalidate(generation: number): void {
-    if (this.current?.generation === generation) this.current = undefined;
+    if (this.current?.generation === generation) {
+      this.current = undefined;
+      this.invalidations += 1;
+    }
+  }
+
+  metrics(): TokenMetrics {
+    return {
+      tokenAcquisitions: this.acquisitions,
+      tokenGenerations: this.generation,
+      tokenCacheHits: this.cacheHits,
+      tokenCoalescedWaiters: this.coalescedWaiters,
+      tokenInvalidations: this.invalidations,
+    };
   }
 
   private async refresh(): Promise<TokenValue> {
     let accessToken: string;
     try {
+      this.acquisitions += 1;
       accessToken = await this.acquireToken();
     } catch {
       throw new AdapterError('AUTH_UNAVAILABLE');
@@ -90,6 +126,9 @@ const RECORD_ID = /^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/;
 
 export class SalesforceAdapter {
   private readonly origin: URL;
+  private activeRequests = 0;
+  private peakActiveRequests = 0;
+  private salesforce401Retries = 0;
 
   constructor(
     private readonly config: AdapterConfig,
@@ -106,6 +145,7 @@ export class SalesforceAdapter {
   async execute(operation: string, input: unknown): Promise<unknown> {
     if (this.activeRequests >= this.config.maxConcurrentRequests) throw new AdapterError('RATE_LIMITED');
     this.activeRequests += 1;
+    this.peakActiveRequests = Math.max(this.peakActiveRequests, this.activeRequests);
     try {
       return await this.executeBounded(operation, input);
     } finally {
@@ -113,7 +153,14 @@ export class SalesforceAdapter {
     }
   }
 
-  private activeRequests = 0;
+  metrics(): AdapterMetrics {
+    return {
+      ...this.tokens.metrics(),
+      salesforce401Retries: this.salesforce401Retries,
+      activeRequests: this.activeRequests,
+      maxConcurrentRequests: this.peakActiveRequests,
+    };
+  }
 
   private async executeBounded(operation: string, input: unknown): Promise<unknown> {
     if (!OPERATIONS.includes(operation as Operation)) throw new AdapterError('FORBIDDEN_OPERATION');
@@ -212,6 +259,7 @@ export class SalesforceAdapter {
       throw new AdapterError('UPSTREAM_UNAVAILABLE');
     }
     if (response.status === 401 && retry) {
+      this.salesforce401Retries += 1;
       this.tokens.invalidate(token.generation);
       return this.getJson(path, false);
     }

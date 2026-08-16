@@ -8,6 +8,13 @@ describe('TokenManager', () => {
     const values = await Promise.all(Array.from({ length: 20 }, () => manager.get()));
     expect(acquire).toHaveBeenCalledTimes(1);
     expect(new Set(values.map((value) => value.generation))).toEqual(new Set([1]));
+    expect(manager.metrics()).toEqual({
+      tokenAcquisitions: 1,
+      tokenGenerations: 1,
+      tokenCacheHits: 0,
+      tokenCoalescedWaiters: 19,
+      tokenInvalidations: 0,
+    });
   });
 
   it('invalidates only the failed current generation', async () => {
@@ -18,6 +25,12 @@ describe('TokenManager', () => {
     expect((await manager.get()).accessToken).toBe('one');
     manager.invalidate(first.generation);
     expect((await manager.get()).accessToken).toBe('two');
+    expect(manager.metrics()).toMatchObject({
+      tokenAcquisitions: 2,
+      tokenGenerations: 2,
+      tokenCacheHits: 1,
+      tokenInvalidations: 1,
+    });
   });
 
   it('reuses a warm token and single-flights an expired refresh', async () => {
@@ -119,8 +132,17 @@ describe('SalesforceAdapter', () => {
       .fn()
       .mockResolvedValueOnce(new Response('{}', { status: 401 }))
       .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }));
-    await expect(adapter(fetcher).execute('getUserInfo', {})).resolves.toEqual({ ok: true });
+    const instance = adapter(fetcher);
+    await expect(instance.execute('getUserInfo', {})).resolves.toEqual({ ok: true });
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(instance.metrics()).toMatchObject({
+      tokenAcquisitions: 2,
+      tokenGenerations: 2,
+      tokenInvalidations: 1,
+      salesforce401Retries: 1,
+      activeRequests: 0,
+      maxConcurrentRequests: 1,
+    });
   });
 
   it('uses the harmless identity read for readiness and returns only a boolean', async () => {
@@ -253,7 +275,19 @@ describe('SalesforceAdapter', () => {
     const second = instance.execute('getUserInfo', {});
     await expect(instance.execute('getUserInfo', {})).rejects.toEqual(new AdapterError('RATE_LIMITED'));
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(instance.metrics()).toMatchObject({ activeRequests: 2, maxConcurrentRequests: 2 });
     release();
     await Promise.all([first, second]);
+    expect(instance.metrics()).toMatchObject({ activeRequests: 0, maxConcurrentRequests: 2 });
+  });
+
+  it('exposes only non-sensitive numeric metrics', async () => {
+    const instance = adapter();
+    await instance.execute('getUserInfo', {});
+    const serialized = JSON.stringify(instance.metrics());
+    expect(Object.values(instance.metrics()).every((value) => Number.isInteger(value) && value >= 0)).toBe(true);
+    expect(serialized).not.toContain('token\"');
+    expect(serialized).not.toContain('authorization');
+    expect(serialized).not.toContain('salesforceOrigin');
   });
 });
