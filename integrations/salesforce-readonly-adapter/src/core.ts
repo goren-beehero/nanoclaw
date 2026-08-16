@@ -165,7 +165,7 @@ export class SalesforceAdapter {
 
   async readiness(): Promise<boolean> {
     try {
-      await this.getJson(this.apiPath('/limits'));
+      await this.getJson('/services/oauth2/userinfo');
       return true;
     } catch {
       return false;

@@ -123,6 +123,15 @@ describe('SalesforceAdapter', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('uses the harmless identity read for readiness and returns only a boolean', async () => {
+    const fetcher = vi.fn(async () => new Response('{"active":true}', { status: 200 }));
+    await expect(adapter(fetcher).readiness()).resolves.toBe(true);
+    expect(fetcher.mock.calls[0]?.[0].pathname).toBe('/services/oauth2/userinfo');
+
+    const unavailable = vi.fn(async () => new Response('{}', { status: 403 }));
+    await expect(adapter(unavailable).readiness()).resolves.toBe(false);
+  });
+
   it('coalesces refresh after concurrent 401 responses and protects the new generation', async () => {
     const acquire = vi.fn().mockResolvedValueOnce('one').mockResolvedValueOnce('two');
     const fetcher = vi.fn(async (_url: URL, init: RequestInit) => {
