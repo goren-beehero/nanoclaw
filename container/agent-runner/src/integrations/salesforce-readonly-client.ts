@@ -3,6 +3,17 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 const allowedOrigin = new URL('http://bobi-salesforce-readonly-adapter:8080');
+const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'] as const;
+
+export function hasPrivateAdapterProxyBypass(env: NodeJS.ProcessEnv): boolean {
+  if (!proxyKeys.some((key) => Boolean(env[key]))) return true;
+  const entries = [env.NO_PROXY, env.no_proxy]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.includes(allowedOrigin.hostname.toLowerCase());
+}
 
 const readOnlyAnnotations = {
   readOnlyHint: true,
@@ -101,6 +112,7 @@ export async function callAdapter(name: string, args: Record<string, unknown>): 
 }
 
 async function main(): Promise<void> {
+  if (!hasPrivateAdapterProxyBypass(process.env)) throw new Error('PRIVATE_ADAPTER_PROXY_BYPASS_REQUIRED');
   const server = new Server({ name: 'salesforce-durable-readonly', version: '1.0.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: salesforceTools }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

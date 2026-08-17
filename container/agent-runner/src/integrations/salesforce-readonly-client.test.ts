@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 
-import { callAdapter, salesforceTools } from './salesforce-readonly-client.js';
+import { callAdapter, hasPrivateAdapterProxyBypass, salesforceTools } from './salesforce-readonly-client.js';
 import fixture from './salesforce-sobject-reads-tools.fixture.json';
 
 const originalFetch = globalThis.fetch;
@@ -9,6 +9,24 @@ afterEach(() => {
 });
 
 describe('Salesforce readonly MCP client', () => {
+  it('fails closed when a proxy is configured without the exact private adapter bypass', () => {
+    expect(hasPrivateAdapterProxyBypass({})).toBe(true);
+    expect(hasPrivateAdapterProxyBypass({ HTTP_PROXY: 'http://proxy.invalid' })).toBe(false);
+    expect(hasPrivateAdapterProxyBypass({ HTTP_PROXY: 'http://proxy.invalid', NO_PROXY: '*' })).toBe(false);
+    expect(
+      hasPrivateAdapterProxyBypass({
+        HTTP_PROXY: 'http://proxy.invalid',
+        NO_PROXY: 'localhost,bobi-salesforce-readonly-adapter',
+      }),
+    ).toBe(true);
+    expect(
+      hasPrivateAdapterProxyBypass({
+        HTTP_PROXY: 'http://proxy.invalid',
+        no_proxy: 'bobi-salesforce-readonly-adapter',
+      }),
+    ).toBe(true);
+  });
+
   it('publishes the exact six-tool compatibility surface', () => {
     expect(salesforceTools.map((tool) => tool.name)).toEqual([
       'getObjectSchema',
