@@ -322,15 +322,60 @@ function optionalApiName(value: unknown): string | undefined {
 
 function validateSoql(query: string): void {
   const normalized = query.trim();
-  if (
-    !/^SELECT\s/i.test(normalized) ||
-    !/\sFROM\s/i.test(normalized) ||
-    !/\sWHERE\s/i.test(normalized) ||
-    !/\sLIMIT\s+\d+\s*$/i.test(normalized)
-  ) {
-    throw new AdapterError('INVALID_INPUT');
+  if (normalized.includes(';') || /\/\*|\*\/|--|\/\//.test(normalized)) throw new AdapterError('FORBIDDEN_OPERATION');
+  const tokens = topLevelSoqlTokens(normalized);
+  if (tokens[0] !== 'SELECT' || !tokens.includes('FROM')) throw new AdapterError('INVALID_INPUT');
+  if (!tokens.includes('WHERE') && !tokens.includes('LIMIT')) throw new AdapterError('INVALID_INPUT');
+  if (tokens.includes('FOR')) throw new AdapterError('FORBIDDEN_OPERATION');
+}
+
+function topLevelSoqlTokens(query: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  const flush = (): void => {
+    if (token) tokens.push(token.toUpperCase());
+    token = '';
+  };
+
+  for (let index = 0; index < query.length; index += 1) {
+    const character = query[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === "'") {
+        if (query[index + 1] === "'") index += 1;
+        else inString = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      flush();
+      inString = true;
+      continue;
+    }
+    if (character === '(') {
+      flush();
+      depth += 1;
+      continue;
+    }
+    if (character === ')') {
+      flush();
+      if (depth === 0) throw new AdapterError('INVALID_INPUT');
+      depth -= 1;
+      continue;
+    }
+    if (depth === 0 && /[A-Za-z0-9_]/.test(character)) token += character;
+    else flush();
   }
-  if (normalized.includes(';')) throw new AdapterError('FORBIDDEN_OPERATION');
+  if (inString || depth !== 0) throw new AdapterError('INVALID_INPUT');
+  flush();
+  return tokens;
 }
 
 function validateSosl(search: string): void {

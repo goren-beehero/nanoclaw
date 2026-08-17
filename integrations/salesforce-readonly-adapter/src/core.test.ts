@@ -74,6 +74,18 @@ describe('SalesforceAdapter', () => {
     );
   });
 
+  it('accepts account-bounded WHERE reads without forcing an explicit LIMIT', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ done: true, records: [] }), { status: 200 }));
+    await adapter(fetcher).execute('soqlQuery', { query: "SELECT Id FROM Account WHERE Name = 'Acme'" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts explicitly limited aggregate reads without a WHERE clause', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ done: true, records: [] }), { status: 200 }));
+    await adapter(fetcher).execute('soqlQuery', { query: 'SELECT Id FROM Account ORDER BY Name LIMIT 5' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves all six read operations and never emits a non-GET or another origin', async () => {
     const cases: Array<[string, Record<string, unknown>, unknown]> = [
       ['getObjectSchema', {}, { sobjects: [] }],
@@ -116,7 +128,12 @@ describe('SalesforceAdapter', () => {
 
   it.each([
     ['soqlQuery', { query: 'DELETE FROM Account' }],
-    ['soqlQuery', { query: 'SELECT Id FROM Account LIMIT 10' }],
+    ['soqlQuery', { query: 'SELECT Id FROM Account' }],
+    ['soqlQuery', { query: 'SELECT Id, (SELECT Id FROM Contacts WHERE Name != null LIMIT 5) FROM Account' }],
+    ['soqlQuery', { query: 'SELECT Id FROM Account WHERE Id != null FOR UPDATE' }],
+    ['soqlQuery', { query: 'SELECT Id FROM Account WHERE Id != null FOR VIEW' }],
+    ['soqlQuery', { query: "SELECT Id FROM Account WHERE Name = 'unterminated" }],
+    ['soqlQuery', { query: 'SELECT COUNT() FROM Account WHERE Id != null)' }],
     ['soqlQuery', { query: 'SELECT Id FROM Account WHERE Id != null LIMIT 10; DELETE FROM Account' }],
     ['find', { search: 'FIND {Acme} RETURNING Account(Id); DELETE' }],
     ['getRelatedRecords', { 'sobject-name': 'Account', id: 'bad', 'relationship-path': 'Contacts' }],
