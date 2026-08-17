@@ -13,6 +13,9 @@ export type AdapterErrorCode =
   | 'UPSTREAM_UNAVAILABLE'
   | 'UPSTREAM_TIMEOUT'
   | 'RATE_LIMITED'
+  | 'ACCESS_DENIED'
+  | 'UNSUPPORTED_OBJECT_OR_FIELD'
+  | 'INVALID_QUERY'
   | 'INVALID_INPUT'
   | 'RESPONSE_LIMIT_EXCEEDED'
   | 'FORBIDDEN_OPERATION';
@@ -167,19 +170,19 @@ export class SalesforceAdapter {
     const args = objectInput(input);
     switch (operation as Operation) {
       case 'getObjectSchema': {
-        exactKeys(args, [], ['object-name']);
-        const objectName = optionalApiName(args['object-name']);
+        exactKeys(args, [], ['object-name', 'objects', 'sobject-name']);
+        const objectName = optionalAliasedApiName(args, ['object-name', 'objects', 'sobject-name']);
         return this.getJson(objectName ? this.apiPath(`/sobjects/${objectName}/describe`) : this.apiPath('/sobjects/'));
       }
       case 'soqlQuery': {
-        exactKeys(args, ['query']);
-        const query = requiredString(args.query, 10_000);
+        exactKeys(args, [], ['query', 'q']);
+        const query = requiredAliasedString(args, ['query', 'q'], 10_000);
         validateSoql(query);
         return this.getPaginated(this.apiPath(`/query?q=${encodeURIComponent(query)}`));
       }
       case 'find': {
-        exactKeys(args, ['search']);
-        const search = requiredString(args.search, 10_000);
+        exactKeys(args, [], ['search', 'q']);
+        const search = requiredAliasedString(args, ['search', 'q'], 10_000);
         validateSosl(search);
         const result = (await this.getJson(this.apiPath(`/search?q=${encodeURIComponent(search)}`))) as JsonObject;
         const records = Array.isArray(result.searchRecords) ? result.searchRecords.slice(0, this.config.maxRows) : [];
@@ -231,9 +234,12 @@ export class SalesforceAdapter {
       const result = (await this.getJson(path)) as JsonObject;
       totalSize ??= result.totalSize;
       const next = Array.isArray(result.records) ? result.records : [];
-      records.push(...next.slice(0, Math.max(0, this.config.maxRows - records.length)));
+      const remaining = Math.max(0, this.config.maxRows - records.length);
+      const pageWasSliced = next.length > remaining;
+      records.push(...next.slice(0, remaining));
       if (result.done === true || records.length >= this.config.maxRows) {
-        return { totalSize, done: result.done === true, truncated: result.done !== true, records };
+        const truncated = pageWasSliced || result.done !== true;
+        return { totalSize, done: result.done === true && !truncated, truncated, records };
       }
       if (typeof result.nextRecordsUrl !== 'string' || !result.nextRecordsUrl.startsWith('/services/data/')) {
         throw new AdapterError('UPSTREAM_UNAVAILABLE');
@@ -264,7 +270,11 @@ export class SalesforceAdapter {
       return this.getJson(path, false);
     }
     if (response.status === 429) throw new AdapterError('RATE_LIMITED');
-    if (!response.ok) throw new AdapterError(response.status === 401 ? 'AUTH_UNAVAILABLE' : 'UPSTREAM_UNAVAILABLE');
+    if (!response.ok) {
+      if (response.status === 401) throw new AdapterError('AUTH_UNAVAILABLE');
+      const errorBody = await readBounded(response, this.config.maxResponseBytes);
+      throw new AdapterError(classifySalesforceError(response.status, errorBody));
+    }
     const text = await readBounded(response, this.config.maxResponseBytes);
     try {
       return JSON.parse(text) as unknown;
@@ -316,8 +326,20 @@ function requiredApiName(value: unknown): string {
   return name;
 }
 
-function optionalApiName(value: unknown): string | undefined {
-  return value === undefined ? undefined : requiredApiName(value);
+function requiredAliasedString(input: JsonObject, names: string[], maxLength: number): string {
+  const present = names.filter((name) => name in input);
+  if (present.length === 0) throw new AdapterError('INVALID_INPUT');
+  const values = present.map((name) => requiredString(input[name], maxLength));
+  if (new Set(values).size !== 1) throw new AdapterError('INVALID_INPUT');
+  return values[0]!;
+}
+
+function optionalAliasedApiName(input: JsonObject, names: string[]): string | undefined {
+  const present = names.filter((name) => name in input);
+  if (present.length === 0) return undefined;
+  const values = present.map((name) => requiredApiName(input[name]));
+  if (new Set(values).size !== 1) throw new AdapterError('INVALID_INPUT');
+  return values[0];
 }
 
 function validateSoql(query: string): void {
@@ -325,8 +347,67 @@ function validateSoql(query: string): void {
   if (normalized.includes(';') || /\/\*|\*\/|--|\/\//.test(normalized)) throw new AdapterError('FORBIDDEN_OPERATION');
   const tokens = topLevelSoqlTokens(normalized);
   if (tokens[0] !== 'SELECT' || !tokens.includes('FROM')) throw new AdapterError('INVALID_INPUT');
-  if (!tokens.includes('WHERE') && !tokens.includes('LIMIT')) throw new AdapterError('INVALID_INPUT');
+  if (!tokens.includes('WHERE') && !tokens.includes('LIMIT') && !hasTopLevelAggregate(normalized)) {
+    throw new AdapterError('INVALID_INPUT');
+  }
   if (tokens.includes('FOR')) throw new AdapterError('FORBIDDEN_OPERATION');
+}
+
+function hasTopLevelAggregate(query: string): boolean {
+  const aggregateFunctions = new Set(['AVG', 'COUNT', 'COUNT_DISTINCT', 'MIN', 'MAX', 'SUM']);
+  let token = '';
+  let lastToken = '';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  const flush = (): string => {
+    if (token) lastToken = token.toUpperCase();
+    token = '';
+    return lastToken;
+  };
+
+  for (let index = 0; index < query.length; index += 1) {
+    const character = query[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === "'") {
+        if (query[index + 1] === "'") index += 1;
+        else inString = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      token = '';
+      lastToken = '';
+      inString = true;
+      continue;
+    }
+    if (character === '(') {
+      const functionName = token ? token.toUpperCase() : lastToken;
+      if (depth === 0 && aggregateFunctions.has(functionName)) return true;
+      flush();
+      lastToken = '';
+      depth += 1;
+      continue;
+    }
+    if (character === ')') {
+      token = '';
+      lastToken = '';
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0 && /[A-Za-z0-9_]/.test(character)) {
+      token += character;
+      continue;
+    }
+    if (depth === 0) {
+      if (flush() === 'FROM') return false;
+      if (!/\s/.test(character)) lastToken = '';
+    }
+  }
+  return false;
 }
 
 function topLevelSoqlTokens(query: string): string[] {
@@ -389,4 +470,33 @@ function recordType(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const attributes = (value as JsonObject).attributes;
   return attributes && typeof attributes === 'object' ? String((attributes as JsonObject).type || '') : undefined;
+}
+
+function classifySalesforceError(status: number, body: string): AdapterErrorCode {
+  const code = salesforceErrorCode(body);
+  if (status === 403 || code === 'INSUFFICIENT_ACCESS' || code === 'INSUFFICIENT_ACCESS_OR_READONLY') {
+    return 'ACCESS_DENIED';
+  }
+  if (
+    code === 'INVALID_TYPE' ||
+    code === 'INVALID_FIELD' ||
+    code === 'INVALID_TYPE_FOR_OPERATION' ||
+    code === 'NOT_FOUND'
+  ) {
+    return 'UNSUPPORTED_OBJECT_OR_FIELD';
+  }
+  if (code === 'MALFORMED_QUERY' || code === 'MALFORMED_SEARCH') return 'INVALID_QUERY';
+  return 'UPSTREAM_UNAVAILABLE';
+}
+
+function salesforceErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    const candidate = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!candidate || typeof candidate !== 'object') return undefined;
+    const code = (candidate as JsonObject).errorCode;
+    return typeof code === 'string' ? code : undefined;
+  } catch {
+    return undefined;
+  }
 }

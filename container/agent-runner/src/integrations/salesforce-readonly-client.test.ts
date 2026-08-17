@@ -60,6 +60,14 @@ describe('Salesforce readonly MCP client', () => {
       });
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
+    expect(salesforceTools.find((tool) => tool.name === 'soqlQuery')?.inputSchema.anyOf).toEqual([
+      { required: ['query'] },
+      { required: ['q'] },
+    ]);
+    expect(salesforceTools.find((tool) => tool.name === 'find')?.inputSchema.anyOf).toEqual([
+      { required: ['search'] },
+      { required: ['q'] },
+    ]);
   });
 
   it('uses only the compiled adapter origin and tool path', async () => {
@@ -79,5 +87,14 @@ describe('Salesforce readonly MCP client', () => {
       async () => new Response(JSON.stringify({ ok: false, error: 'raw secret error' }), { status: 500 }),
     ) as typeof fetch;
     expect(callAdapter('getUserInfo', {})).rejects.toThrow('UPSTREAM_UNAVAILABLE');
+  });
+
+  it('preserves recognized safe adapter error classes', async () => {
+    for (const error of ['ACCESS_DENIED', 'UNSUPPORTED_OBJECT_OR_FIELD', 'INVALID_QUERY']) {
+      globalThis.fetch = mock(
+        async () => new Response(JSON.stringify({ ok: false, error }), { status: 400 }),
+      ) as typeof fetch;
+      await expect(callAdapter('getUserInfo', {})).rejects.toThrow(error);
+    }
   });
 });

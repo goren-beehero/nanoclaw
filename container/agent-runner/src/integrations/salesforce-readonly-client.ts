@@ -25,31 +25,41 @@ const readOnlyAnnotations = {
 export const salesforceTools: Tool[] = [
   {
     name: 'getObjectSchema',
-    description: 'Returns Salesforce schema information. Omit object-name for the compact object index.',
+    description:
+      'Returns Salesforce schema information. Omit all object arguments for the compact object index. For one object, use object-name; legacy singular aliases objects and sobject-name are also accepted.',
     annotations: readOnlyAnnotations,
-    inputSchema: { type: 'object', additionalProperties: false, properties: { 'object-name': { type: 'string' } } },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        'object-name': { type: 'string' },
+        objects: { type: 'string' },
+        'sobject-name': { type: 'string' },
+      },
+    },
   },
   {
     name: 'soqlQuery',
     description:
-      'Executes a bounded read-only SOQL SELECT query. Include a top-level WHERE or LIMIT. Task/Event objects and polymorphic activity relationships may be unavailable. If an activity read fails, explicitly say activity data could not be verified; never infer that no activity or tasks exist.',
+      'Executes a bounded read-only SOQL SELECT query. Use query; legacy q is also accepted. Include a top-level WHERE or LIMIT, unless the SELECT is aggregate-only. If truncated is true or done is not true, the result is incomplete: never claim all, none missing, an exact total, or reconciliation completeness. Task/Event objects and polymorphic activity relationships may be unavailable. If an activity read fails, explicitly say activity data could not be verified; never infer that no activity or tasks exist.',
     annotations: readOnlyAnnotations,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['query'],
-      properties: { query: { type: 'string' } },
+      anyOf: [{ required: ['query'] }, { required: ['q'] }],
+      properties: { query: { type: 'string' }, q: { type: 'string' } },
     },
   },
   {
     name: 'find',
-    description: 'Executes a bounded SOSL FIND search across Salesforce objects.',
+    description:
+      'Executes a bounded SOSL FIND search across Salesforce objects. Use search; legacy q is also accepted. If truncated is true, the result is incomplete and must not support completeness or exact-total claims.',
     annotations: readOnlyAnnotations,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['search'],
-      properties: { search: { type: 'string' } },
+      anyOf: [{ required: ['search'] }, { required: ['q'] }],
+      properties: { search: { type: 'string' }, q: { type: 'string' } },
     },
   },
   {
@@ -71,7 +81,8 @@ export const salesforceTools: Tool[] = [
   },
   {
     name: 'getRelatedRecords',
-    description: 'Returns bounded child records for a Salesforce parent record relationship.',
+    description:
+      'Returns bounded child records for a Salesforce parent record relationship. If truncated is true or done is not true, the result is incomplete and must not support completeness or exact-total claims.',
     annotations: readOnlyAnnotations,
     inputSchema: {
       type: 'object',
@@ -92,6 +103,9 @@ const errorCodes = new Set([
   'UPSTREAM_UNAVAILABLE',
   'UPSTREAM_TIMEOUT',
   'RATE_LIMITED',
+  'ACCESS_DENIED',
+  'UNSUPPORTED_OBJECT_OR_FIELD',
+  'INVALID_QUERY',
   'INVALID_INPUT',
   'RESPONSE_LIMIT_EXCEEDED',
   'FORBIDDEN_OPERATION',

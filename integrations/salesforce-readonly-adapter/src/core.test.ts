@@ -86,6 +86,39 @@ describe('SalesforceAdapter', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts aggregate-only reads without WHERE or LIMIT but still rejects unbounded row reads', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ done: true, records: [] }), { status: 200 }));
+    const instance = adapter(fetcher);
+    await instance.execute('soqlQuery', { query: 'SELECT COUNT() FROM Account' });
+    await instance.execute('soqlQuery', { query: 'SELECT COUNT () FROM Contact' });
+    await instance.execute('soqlQuery', {
+      query: 'SELECT StageName, SUM(Amount) FROM Opportunity GROUP BY StageName',
+    });
+    await expect(instance.execute('soqlQuery', { query: 'SELECT Count FROM Account' })).rejects.toEqual(
+      new AdapterError('INVALID_INPUT'),
+    );
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts retained legacy aliases and rejects conflicting aliases', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ done: true, records: [] }), { status: 200 }));
+    const instance = adapter(fetcher);
+    await instance.execute('getObjectSchema', { objects: 'Account' });
+    await instance.execute('getObjectSchema', { 'sobject-name': 'Account' });
+    await instance.execute('soqlQuery', { q: 'SELECT Id FROM Account LIMIT 1' });
+    await instance.execute('find', { q: 'FIND {Acme} RETURNING Account(Id, Name)' });
+    await expect(
+      instance.execute('soqlQuery', {
+        query: 'SELECT Id FROM Account LIMIT 1',
+        q: 'SELECT Id FROM Contact LIMIT 1',
+      }),
+    ).rejects.toEqual(new AdapterError('INVALID_INPUT'));
+    await expect(instance.execute('getObjectSchema', { 'object-name': 'Account', objects: 'Contact' })).rejects.toEqual(
+      new AdapterError('INVALID_INPUT'),
+    );
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
   it('preserves all six read operations and never emits a non-GET or another origin', async () => {
     const cases: Array<[string, Record<string, unknown>, unknown]> = [
       ['getObjectSchema', {}, { sobjects: [] }],
@@ -203,12 +236,26 @@ describe('SalesforceAdapter', () => {
   });
 
   it.each([
-    [403, 'UPSTREAM_UNAVAILABLE'],
+    [403, 'ACCESS_DENIED'],
     [429, 'RATE_LIMITED'],
     [500, 'UPSTREAM_UNAVAILABLE'],
   ])('sanitizes upstream HTTP %s', async (status, code) => {
     const fetcher = vi.fn(async () => new Response('raw upstream secret', { status }));
     await expect(adapter(fetcher).execute('getUserInfo', {})).rejects.toEqual(new AdapterError(code));
+  });
+
+  it.each([
+    [400, 'INVALID_TYPE', 'UNSUPPORTED_OBJECT_OR_FIELD'],
+    [404, 'NOT_FOUND', 'UNSUPPORTED_OBJECT_OR_FIELD'],
+    [400, 'INVALID_FIELD', 'UNSUPPORTED_OBJECT_OR_FIELD'],
+    [400, 'MALFORMED_QUERY', 'INVALID_QUERY'],
+    [400, 'MALFORMED_SEARCH', 'INVALID_QUERY'],
+    [400, 'UNKNOWN_CODE', 'UPSTREAM_UNAVAILABLE'],
+  ])('classifies safe Salesforce error code %s/%s', async (status, errorCode, expected) => {
+    const fetcher = vi.fn(
+      async () => new Response(JSON.stringify([{ message: 'redacted upstream detail', errorCode }]), { status }),
+    );
+    await expect(adapter(fetcher).execute('getUserInfo', {})).rejects.toEqual(new AdapterError(expected));
   });
 
   it('sanitizes timeout, DNS, reset, and malformed JSON failures', async () => {
@@ -241,6 +288,13 @@ describe('SalesforceAdapter', () => {
     ).execute('soqlQuery', { query: 'SELECT Id FROM Account WHERE Id != null LIMIT 200' });
     expect((rowBound as { records: unknown[] }).records).toHaveLength(100);
     expect((rowBound as { truncated: boolean }).truncated).toBe(true);
+
+    const onePageRows = Array.from({ length: 150 }, (_, id) => ({ id }));
+    const onePageBound = await adapter(
+      vi.fn(async () => new Response(JSON.stringify({ done: true, records: onePageRows }))),
+    ).execute('soqlQuery', { query: 'SELECT Id FROM Account LIMIT 200' });
+    expect(onePageBound).toMatchObject({ done: false, truncated: true });
+    expect((onePageBound as { records: unknown[] }).records).toHaveLength(100);
 
     const pageFetcher = vi.fn(
       async () =>
