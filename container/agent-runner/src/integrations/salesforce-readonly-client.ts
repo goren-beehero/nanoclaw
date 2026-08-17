@@ -32,7 +32,7 @@ export const salesforceTools: Tool[] = [
   {
     name: 'soqlQuery',
     description:
-      'Executes a bounded read-only SOQL SELECT query. Include a top-level WHERE or LIMIT. Use SOQL for Task/Event activity because polymorphic activity relationship paths may be unavailable.',
+      'Executes a bounded read-only SOQL SELECT query. Include a top-level WHERE or LIMIT. Task/Event objects and polymorphic activity relationships may be unavailable. If an activity read fails, explicitly say activity data could not be verified; never infer that no activity or tasks exist.',
     annotations: readOnlyAnnotations,
     inputSchema: {
       type: 'object',
