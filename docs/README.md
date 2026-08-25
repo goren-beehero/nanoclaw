@@ -8,3 +8,9 @@ The files in this directory are original design documents and developer referenc
 |---|---|
 | [SECURITY.md](SECURITY.md) | [Security model](https://docs.nanoclaw.dev/concepts/security) |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | [Introduction](https://docs.nanoclaw.dev/introduction) |
+
+## Bobi fork operations
+
+- [Bobi mounted repository releases](bobi-mounted-repository-releases.md) —
+  immutable staging, activation, validation, and rollback for Bobi's read-only
+  repository mounts
