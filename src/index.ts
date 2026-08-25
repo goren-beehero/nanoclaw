@@ -14,7 +14,7 @@ import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
-import { routeInbound } from './router.js';
+import { authorizeInboundMedia, routeInbound } from './router.js';
 import { log } from './log.js';
 import { enforceUpgradeTripwire } from './upgrade-state.js';
 
@@ -51,7 +51,7 @@ import './cli/commands/index.js';
 import './cli/delivery-action.js';
 import { startCliServer, stopCliServer } from './cli/socket-server.js';
 
-import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
+import type { ChannelAdapter, ChannelSetup, InboundEvent, InboundMessage } from './channels/adapter.js';
 import {
   initChannelAdapters,
   teardownChannelAdapters,
@@ -84,25 +84,30 @@ async function main(): Promise<void> {
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
+    const toInboundEvent = (platformId: string, threadId: string | null, message: InboundMessage): InboundEvent => ({
+      channelType: adapter.channelType,
+      // The one host-side stamping seam: adapters stay instance-blind,
+      // the host stamps the receiving instance on every inbound event.
+      instance: adapter.instance ?? adapter.channelType,
+      platformId,
+      threadId,
+      message: {
+        id: message.id,
+        kind: message.kind,
+        content: JSON.stringify(message.content),
+        timestamp: message.timestamp,
+        isMention: message.isMention,
+        isThreadSubscribed: message.isThreadSubscribed,
+        isGroup: message.isGroup,
+      },
+    });
+
     return {
+      authorizeInboundMedia(platformId, threadId, message) {
+        return authorizeInboundMedia(toInboundEvent(platformId, threadId, message));
+      },
       onInbound(platformId, threadId, message) {
-        routeInbound({
-          channelType: adapter.channelType,
-          // The one host-side stamping seam: adapters stay instance-blind,
-          // the host stamps the receiving instance on every inbound event.
-          instance: adapter.instance ?? adapter.channelType,
-          platformId,
-          threadId,
-          message: {
-            id: message.id,
-            kind: message.kind,
-            content: JSON.stringify(message.content),
-            timestamp: message.timestamp,
-            isMention: message.isMention,
-            isThreadSubscribed: message.isThreadSubscribed,
-            isGroup: message.isGroup,
-          },
-        }).catch((err) => {
+        routeInbound(toInboundEvent(platformId, threadId, message)).catch((err) => {
           log.error('Failed to route inbound message', { channelType: adapter.channelType, err });
         });
       },

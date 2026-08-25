@@ -106,6 +106,88 @@ export interface ChatSdkBridgeConfig {
 }
 
 /**
+ * Serialize a Chat SDK message while its attachment fetchers are still live.
+ * Exported so channel regressions can pin the byte-preservation boundary
+ * without reaching into Chat SDK webhook internals.
+ */
+export async function serializeChatSdkInboundMessage(
+  message: ChatMessage,
+  config: Pick<ChatSdkBridgeConfig, 'extractReplyContext' | 'extractForwardedContext'>,
+  isMention: boolean,
+  isGroup?: boolean,
+  isThreadSubscribed = false,
+): Promise<InboundMessage> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const serialized = message.toJSON() as Record<string, any>;
+
+  // Download attachment data before serialization loses fetchData()
+  if (message.attachments && message.attachments.length > 0) {
+    const enriched = [];
+    for (const att of message.attachments) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry: Record<string, any> = {
+        type: att.type,
+        name: att.name,
+        mimeType: att.mimeType,
+        size: att.size,
+        width: (att as unknown as Record<string, unknown>).width,
+        height: (att as unknown as Record<string, unknown>).height,
+      };
+      if (att.fetchData) {
+        try {
+          const buffer = await att.fetchData();
+          entry.data = buffer.toString('base64');
+        } catch (err) {
+          log.warn('Failed to download attachment', { type: att.type, err });
+        }
+      }
+      enriched.push(entry);
+    }
+    serialized.attachments = enriched;
+  }
+
+  // Extract reply context via platform-specific hook
+  if (config.extractReplyContext && message.raw) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const replyTo = config.extractReplyContext(message.raw as Record<string, any>);
+    if (replyTo) serialized.replyTo = replyTo;
+  }
+
+  // Preserve only the bounded, user-visible part of a platform-native
+  // forward. Slack keeps forwarded message text in raw legacy attachments,
+  // which are otherwise intentionally discarded below.
+  if (config.extractForwardedContext && message.raw) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const forwardedMessages = config.extractForwardedContext(message.raw as Record<string, any>);
+    if (forwardedMessages.length > 0) serialized.forwardedMessages = forwardedMessages;
+  }
+
+  // Project chat-sdk's nested author into the flat sender fields the router
+  // expects (see permissions extractAndUpsertUser). Native adapters already
+  // populate these directly; this brings chat-sdk adapters in line.
+  const author = serialized.author as { userId?: string; fullName?: string; userName?: string } | undefined;
+  if (author) {
+    const name = author.fullName ?? author.userName;
+    serialized.senderId = author.userId;
+    serialized.sender = name;
+    serialized.senderName = name;
+  }
+
+  // Drop raw to save DB space (can be very large)
+  serialized.raw = undefined;
+
+  return {
+    id: message.id,
+    kind: 'chat-sdk',
+    content: serialized,
+    timestamp: message.metadata.dateSent.toISOString(),
+    isMention,
+    isThreadSubscribed,
+    isGroup,
+  };
+}
+
+/**
  * Split `text` into chunks no larger than `limit`, preferring paragraph
  * breaks, then line breaks, then a hard character cut as a last resort.
  * Preserves code fences only structurally — a fenced block that straddles a
@@ -169,82 +251,6 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
   let setupConfig: ChannelSetup;
   let gatewayAbort: AbortController | null = null;
 
-  async function messageToInbound(
-    message: ChatMessage,
-    isMention: boolean,
-    isGroup?: boolean,
-    isThreadSubscribed = false,
-  ): Promise<InboundMessage> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const serialized = message.toJSON() as Record<string, any>;
-
-    // Download attachment data before serialization loses fetchData()
-    if (message.attachments && message.attachments.length > 0) {
-      const enriched = [];
-      for (const att of message.attachments) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const entry: Record<string, any> = {
-          type: att.type,
-          name: att.name,
-          mimeType: att.mimeType,
-          size: att.size,
-          width: (att as unknown as Record<string, unknown>).width,
-          height: (att as unknown as Record<string, unknown>).height,
-        };
-        if (att.fetchData) {
-          try {
-            const buffer = await att.fetchData();
-            entry.data = buffer.toString('base64');
-          } catch (err) {
-            log.warn('Failed to download attachment', { type: att.type, err });
-          }
-        }
-        enriched.push(entry);
-      }
-      serialized.attachments = enriched;
-    }
-
-    // Extract reply context via platform-specific hook
-    if (config.extractReplyContext && message.raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const replyTo = config.extractReplyContext(message.raw as Record<string, any>);
-      if (replyTo) serialized.replyTo = replyTo;
-    }
-
-    // Preserve only the bounded, user-visible part of a platform-native
-    // forward. Slack keeps forwarded message text in raw legacy attachments,
-    // which are otherwise intentionally discarded below.
-    if (config.extractForwardedContext && message.raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const forwardedMessages = config.extractForwardedContext(message.raw as Record<string, any>);
-      if (forwardedMessages.length > 0) serialized.forwardedMessages = forwardedMessages;
-    }
-
-    // Project chat-sdk's nested author into the flat sender fields the router
-    // expects (see src/router.ts extractAndUpsertUser). Native adapters already
-    // populate these directly; this brings chat-sdk adapters in line.
-    const author = serialized.author as { userId?: string; fullName?: string; userName?: string } | undefined;
-    if (author) {
-      const name = author.fullName ?? author.userName;
-      serialized.senderId = author.userId;
-      serialized.sender = name;
-      serialized.senderName = name;
-    }
-
-    // Drop raw to save DB space (can be very large)
-    serialized.raw = undefined;
-
-    return {
-      id: message.id,
-      kind: 'chat-sdk',
-      content: serialized,
-      timestamp: message.metadata.dateSent.toISOString(),
-      isMention,
-      isThreadSubscribed,
-      isGroup,
-    };
-  }
-
   const bridge: ChannelAdapter = {
     name: config.instance ?? adapter.name,
     channelType: adapter.name, // unchanged — semantic platform key
@@ -287,14 +293,18 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         await setupConfig.onInbound(
           channelId,
           thread.id,
-          await messageToInbound(message, message.isMention === true, true, true),
+          await serializeChatSdkInboundMessage(message, config, message.isMention === true, true, true),
         );
       });
 
       // @mention in an unsubscribed thread — SDK-confirmed bot mention.
       chat.onNewMention(async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true, true));
+        await setupConfig.onInbound(
+          channelId,
+          thread.id,
+          await serializeChatSdkInboundMessage(message, config, true, true),
+        );
       });
 
       // DMs — by definition addressed to the bot. Thread id flows through
@@ -311,7 +321,11 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           sender: (message.author as any)?.fullName ?? (message.author as any)?.userId ?? 'unknown',
           threadId: thread.id,
         });
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true, false));
+        await setupConfig.onInbound(
+          channelId,
+          thread.id,
+          await serializeChatSdkInboundMessage(message, config, true, false),
+        );
       });
 
       // Plain messages in unsubscribed threads.
@@ -326,7 +340,11 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // flood gate.
       chat.onNewMessage(/[\s\S]*/, async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, false, true));
+        await setupConfig.onInbound(
+          channelId,
+          thread.id,
+          await serializeChatSdkInboundMessage(message, config, false, true),
+        );
       });
 
       // Handle button clicks (ask_user_question)

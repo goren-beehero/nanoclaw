@@ -111,6 +111,54 @@ export function setSenderScopeGate(fn: SenderScopeGateFn): void {
 }
 
 /**
+ * Side-effect-free admission hook for adapter media downloads.
+ *
+ * The normal access gate records drops and may start an approval flow. Media
+ * preflight runs before the adapter has downloaded any bytes, so it needs the
+ * same role/membership decision without firing those routing side effects.
+ * Without the permissions module, media download fails closed.
+ */
+export type MediaAdmissionGateFn = (
+  event: InboundEvent,
+  userId: string | null,
+  mg: MessagingGroup,
+  agent: MessagingGroupAgent,
+) => AccessGateResult | Promise<AccessGateResult>;
+
+let mediaAdmissionGate: MediaAdmissionGateFn | null = null;
+
+export function setMediaAdmissionGate(fn: MediaAdmissionGateFn): void {
+  if (mediaAdmissionGate) {
+    log.warn('Media-admission gate overwritten');
+  }
+  mediaAdmissionGate = fn;
+}
+
+/**
+ * Can this inbound sender make the adapter fetch attachment bytes?
+ *
+ * Unknown, unwired, and denied conversations fail closed. A wired
+ * conversation is admitted when at least one target agent authorizes the
+ * sender. Normal routing repeats its full access check after download, so this
+ * is an early resource-admission boundary rather than replacement auth.
+ */
+export async function authorizeInboundMedia(event: InboundEvent): Promise<boolean> {
+  const found = getMessagingGroupWithAgentCount(
+    event.channelType,
+    event.platformId,
+    event.instance ?? event.channelType,
+  );
+  if (!found || found.agentCount === 0 || found.mg.denied_at || !mediaAdmissionGate) return false;
+
+  const userId = senderResolver ? senderResolver(event) : null;
+  const agents = getMessagingGroupAgents(found.mg.id);
+  for (const agent of agents) {
+    if ((await mediaAdmissionGate(event, userId, found.mg, agent)).allowed) return true;
+  }
+  return false;
+}
+
+/**
  * Message-interceptor hook. Runs at the very top of routeInbound, before
  * messaging-group resolution. When an interceptor returns true the message is
  * consumed and routing stops. Multiple interceptors may register; they run in
