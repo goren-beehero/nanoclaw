@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
+import { Message, parseMarkdown } from 'chat';
 
-import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
+import { createChatSdkBridge, serializeChatSdkInboundMessage, splitForLimit } from './chat-sdk-bridge.js';
 
 vi.mock('../webhook-server.js', () => ({
   registerWebhookAdapter: vi.fn(),
@@ -51,6 +52,52 @@ describe('splitForLimit', () => {
     expect(chunks.length).toBe(Math.ceil(100 / 30));
     for (const c of chunks) expect(c.length).toBeLessThanOrEqual(30);
     expect(chunks.join('')).toBe(text);
+  });
+});
+
+describe('serializeChatSdkInboundMessage attachments', () => {
+  it('preserves Slack attachment bytes before Chat SDK serialization drops fetchData', async () => {
+    const fetchData = vi.fn(async () => Buffer.from('bee-photo'));
+    const message = new Message({
+      id: 'slack-file-1',
+      threadId: 'slack:thread-1',
+      text: 'inspect this',
+      formatted: parseMarkdown('inspect this'),
+      raw: { platformPayload: 'not persisted' },
+      author: {
+        userId: 'U123',
+        userName: 'goren',
+        fullName: 'Goren',
+        isBot: false,
+        isMe: false,
+      },
+      metadata: { dateSent: new Date(0), edited: false },
+      attachments: [
+        {
+          type: 'image',
+          name: 'hive.jpg',
+          mimeType: 'image/jpeg',
+          size: 9,
+          fetchData,
+        },
+      ],
+    });
+
+    const inbound = await serializeChatSdkInboundMessage(message, {}, true, true);
+    const content = inbound.content as {
+      raw?: unknown;
+      attachments?: Array<{ name: string; data?: string; size?: number }>;
+    };
+
+    expect(fetchData).toHaveBeenCalledOnce();
+    expect(content.attachments).toEqual([
+      expect.objectContaining({
+        name: 'hive.jpg',
+        size: 9,
+        data: Buffer.from('bee-photo').toString('base64'),
+      }),
+    ]);
+    expect(content.raw).toBeUndefined();
   });
 });
 

@@ -7,6 +7,20 @@
 
 /** Passed to the adapter at setup time. */
 export interface ChannelSetup {
+  /**
+   * Ask the host whether this already-normalized sender may cause inbound
+   * media bytes to be fetched. Native adapters call this after extracting
+   * sender/chat metadata but before any network download or host-file write.
+   *
+   * Optional for compatibility with older hosts. Security-sensitive adapters
+   * must fail closed when it is absent.
+   */
+  authorizeInboundMedia?(
+    platformId: string,
+    threadId: string | null,
+    message: InboundMessage,
+  ): boolean | Promise<boolean>;
+
   /** Called when an inbound message arrives from the platform. */
   onInbound(platformId: string, threadId: string | null, message: InboundMessage): void | Promise<void>;
 

@@ -23,6 +23,7 @@ import {
   routeInbound,
   setAccessGate,
   setChannelRequestGate,
+  setMediaAdmissionGate,
   registerMessageInterceptor,
   setSenderResolver,
   setSenderScopeGate,
@@ -179,6 +180,20 @@ function handleUnknownSender(
 }
 
 setSenderResolver(extractAndUpsertUser);
+
+setMediaAdmissionGate((_event, userId, mg, agent): AccessGateResult => {
+  // Fully public wiring: every sender is intentionally admitted.
+  if (mg.unknown_sender_policy === 'public' && agent.sender_scope === 'all') {
+    return { allowed: true };
+  }
+
+  // Every non-public policy, and public wirings narrowed to known senders,
+  // require the same owner/admin/member decision as normal routing. Keep this
+  // preflight side-effect free: no dropped-message row and no approval card.
+  if (!userId) return { allowed: false, reason: 'unknown_user' };
+  const decision = canAccessAgentGroup(userId, agent.agent_group_id);
+  return decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason };
+});
 
 setAccessGate((event, userId, mg, agentGroupId): AccessGateResult => {
   // Public channels skip the access check entirely.

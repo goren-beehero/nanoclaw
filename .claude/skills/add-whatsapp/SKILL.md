@@ -6,8 +6,8 @@ description: Add WhatsApp channel via native Baileys adapter. Direct connection 
 # Add WhatsApp Channel
 
 Adds WhatsApp support via the native Baileys adapter — a direct WhatsApp Web
-connection, no Chat SDK bridge. NanoClaw doesn't ship channels in trunk — this
-skill copies the WhatsApp adapter in from the `channels` branch.
+connection, no Chat SDK bridge. The Bobi fork keeps its reviewed, fail-closed
+adapter in trunk; it remains dark until credentials are linked.
 
 The mechanical steps under **Apply** carry `nc:` directive fences: an agent
 reads the prose and applies them, and a parser can apply them deterministically
@@ -69,15 +69,14 @@ echo dedicated
 
 ## Apply
 
-### 1. Copy the adapter and its registration test
+### 1. Copy channel support files
 
-Fetch the `channels` branch and copy the WhatsApp adapter, its registration
-test, and the `whatsapp-formatting` container skill (overwrite — the branch is
-canonical). The `whatsapp-auth` setup step is maintained in trunk, so it is not
-copied here:
+Keep the guarded `src/channels/whatsapp.ts` shipped by the Bobi fork. Fetch the
+`channels` branch only for the registration test and `whatsapp-formatting`
+container skill. The `whatsapp-auth` setup step is maintained in trunk, so it
+is not copied here:
 
 ```nc:copy from-branch:channels
-src/channels/whatsapp.ts
 src/channels/whatsapp-registration.test.ts
 container/skills/whatsapp-formatting/SKILL.md
 container/skills/whatsapp-formatting/instructions.md
@@ -105,7 +104,7 @@ Baileys is the WhatsApp Web client; `qrcode` renders the device-link QR in the
 terminal; `pino` is Baileys' logger:
 
 ```nc:dep
-@whiskeysockets/baileys@7.0.0-rc.9
+@whiskeysockets/baileys@7.0.0-rc14
 qrcode@1.5.4
 @types/qrcode@1.5.6
 pino@9.6.0
@@ -114,21 +113,24 @@ pino@9.6.0
 ### 4. Build and validate
 
 Build first: it typechecks the adapter against core and proves the dependencies
-are installed. Then run the one integration test.
+are installed. Then run the registration and media-admission tests.
 
 ```nc:run effect:build
 pnpm run build
 ```
 ```nc:run effect:test
-pnpm exec vitest run src/channels/whatsapp-registration.test.ts
+pnpm exec vitest run src/channels/whatsapp-registration.test.ts src/channels/whatsapp-media-admission.test.ts src/modules/permissions/media-admission.test.ts
 ```
 
 `whatsapp-registration.test.ts` imports the real channel barrel and asserts the
 registry contains `whatsapp`. It goes red if the `import './whatsapp.js';` line
 is deleted or drifts, if the barrel fails to evaluate, or if
 `@whiskeysockets/baileys` isn't installed (the import throws) — so it also covers
-the dependency from step 3. End-to-end delivery against a real WhatsApp number is
-verified manually once the service runs.
+the dependency from step 3. The media-admission tests prove that denied or
+unwired senders cannot invoke Baileys' downloader, while known members and
+deliberately public/all conversations retain media delivery. End-to-end
+delivery against a real WhatsApp number is verified manually once the service
+runs.
 
 ## Authenticate
 
@@ -433,20 +435,6 @@ pairing-code method (no camera needed):
 [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" && "$OSTYPE" != darwin* ]] && echo "IS_HEADLESS=true" || echo "IS_HEADLESS=false"
 ```
 
-## Optional configuration
-
-If the assistant runs on a dedicated number (its own phone/SIM, not your personal
-WhatsApp), tell the adapter so it doesn't prefix outbound replies with its name:
-
-```bash
-ASSISTANT_HAS_OWN_NUMBER=true
-```
-
-The Apply flow writes this key for you **in both modes** — `true` for a
-dedicated number, `false` for a shared (personal) one — so a re-run that
-switches modes never leaves a stale value behind. Absent (or anything other
-than `true`) is read as shared/personal, the safe default.
-
 ## Troubleshooting
 
 ### QR code or pairing code expired
@@ -469,26 +457,6 @@ WhatsApp's pairing-code flow occasionally rejects valid codes with "Couldn't lin
 device." This is a server-side rejection unrelated to the code itself. If you hit
 it more than once, switch to the QR method — it has a noticeably higher success
 rate.
-
-### Pairing code not working
-
-Codes expire in ~60 seconds. Delete auth and retry:
-
-```bash
-rm -rf store/auth/ && pnpm exec tsx setup/index.ts --step whatsapp-auth -- --method pairing-code --phone <phone>
-```
-
-Ensure: digits only (no `+`), phone has internet, WhatsApp is updated.
-
-WhatsApp's pairing-code flow occasionally rejects valid codes with "Couldn't link
-device — An error happened. Please try again." This is a server-side rejection
-unrelated to the code itself; we've seen it happen twice in a row on fresh
-dedicated numbers. If you hit it more than once, switch to QR-browser auth — it
-has a noticeably higher success rate:
-
-```bash
-pnpm exec tsx .claude/skills/add-whatsapp/scripts/wa-qr-browser.ts --clean
-```
 
 ### "waiting for this message" on reactions
 
@@ -514,11 +482,16 @@ systemctl --user start $(systemd_unit)
 Two instances connected with the same credentials. Ensure only one NanoClaw
 process is running.
 
-### Trunk updated but shared-number behavior unchanged (stale adapter copy)
+### Trunk updated but WhatsApp behavior is unchanged
 
-The shared-number behavior (no stranger approval cards, name-pattern group defaults) lives in the **adapter copy** at `src/channels/whatsapp.ts`, installed from the `channels` branch — not in trunk. If you updated trunk via `/update-nanoclaw` but skipped the skill-update step, the old adapter copy neither reads `ASSISTANT_HAS_OWN_NUMBER` itself nor declares channel defaults, so trunk falls back to the legacy behavior: approval cards still fire on a personal number, and new wirings get the channel-blind defaults. Symptoms of the skew:
+The Bobi fork ships its reviewed adapter at `src/channels/whatsapp.ts`. If an
+older generic `/add-whatsapp` run overwrote that file from a registry branch,
+the guarded media-admission and shared-number behavior may be missing. Symptoms
+include:
 
 - `.env` says `ASSISTANT_HAS_OWN_NUMBER=false` (or unset) but strangers' DMs still raise approval cards
 - `ncl wirings create` on a WhatsApp group defaults to `mention` instead of a name pattern
 
-Fix: re-run `/add-whatsapp` (or `/update-skills`) to pull the current adapter from the `channels` branch, then restart the service. The reverse skew (new adapter, old trunk) can't happen — the adapter's `defaults` field is optional and old trunk ignores it.
+Fix: restore `src/channels/whatsapp.ts` from the current Bobi release, run the
+three validation tests from Apply step 4, then restart the service. Do not
+overwrite the Bobi adapter from a generic registry branch.
