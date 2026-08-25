@@ -1,0 +1,38 @@
+[
+  {
+    "name": "getObjectSchema",
+    "description": "Returns Salesforce schema information. Omit all object arguments for the compact object index. For one object, use object-name; legacy singular aliases objects and sobject-name are also accepted.",
+    "required": [],
+    "optional": ["object-name", "objects", "sobject-name"]
+  },
+  {
+    "name": "soqlQuery",
+    "description": "Executes a bounded read-only SOQL SELECT query. Use query; legacy q is also accepted. Include a top-level WHERE or LIMIT, unless the SELECT is aggregate-only. If truncated is true or done is not true, the result is incomplete: never claim all, none missing, an exact total, or reconciliation completeness. Task/Event objects and polymorphic activity relationships may be unavailable. If an activity read fails, explicitly say activity data could not be verified; never infer that no activity or tasks exist.",
+    "required": [],
+    "optional": ["query", "q"]
+  },
+  {
+    "name": "find",
+    "description": "Executes a bounded SOSL FIND search across Salesforce objects. Use search; legacy q is also accepted. If truncated is true, the result is incomplete and must not support completeness or exact-total claims.",
+    "required": [],
+    "optional": ["search", "q"]
+  },
+  {
+    "name": "getUserInfo",
+    "description": "Returns the authenticated Salesforce user identity and locale context.",
+    "required": [],
+    "optional": []
+  },
+  {
+    "name": "listRecentSobjectRecords",
+    "description": "Returns recently viewed records for one Salesforce object type.",
+    "required": ["sobject-name"],
+    "optional": []
+  },
+  {
+    "name": "getRelatedRecords",
+    "description": "Returns bounded child records for a Salesforce parent record relationship. If truncated is true or done is not true, the result is incomplete and must not support completeness or exact-total claims.",
+    "required": ["sobject-name", "id", "relationship-path"],
+    "optional": []
+  }
+]
