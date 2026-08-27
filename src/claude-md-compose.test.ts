@@ -136,6 +136,7 @@ describe('composeGroupClaudeMd knowledge-gap policy', () => {
 
 describe('composeGroupClaudeMd Google Drive-hosted file policy', () => {
   const generalCapability = 'read, create, copy, and edit files stored in Google Drive';
+  const normalize = (value: string): string => value.replace(/\s+/g, ' ');
   const protectedActions = [
     'Deleting or trashing files',
     'transferring ownership',
@@ -150,9 +151,11 @@ describe('composeGroupClaudeMd Google Drive-hosted file policy', () => {
     composeGroupClaudeMd(ag);
 
     expect(importsOf(ag.folder)).toContain('@./.claude-fragments/module-google-docs-write.md');
-    const policy = fs.readFileSync(
-      path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools', 'google-docs-write.instructions.md'),
-      'utf-8',
+    const policy = normalize(
+      fs.readFileSync(
+        path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools', 'google-docs-write.instructions.md'),
+        'utf-8',
+      ),
     );
     expect(policy).toContain('Google Drive-hosted file operations');
     expect(policy).toContain(generalCapability);
@@ -164,7 +167,7 @@ describe('composeGroupClaudeMd Google Drive-hosted file policy', () => {
   it('keeps the compact and full OneCLI instructions aligned with the contract', () => {
     const onecliDir = path.join(process.cwd(), 'container', 'skills', 'onecli-gateway');
     const fragments = ['instructions.md', 'SKILL.md'].map((name) =>
-      fs.readFileSync(path.join(onecliDir, name), 'utf-8'),
+      normalize(fs.readFileSync(path.join(onecliDir, name), 'utf-8')),
     );
 
     for (const policy of fragments) {
