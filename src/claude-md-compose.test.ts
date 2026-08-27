@@ -134,6 +134,48 @@ describe('composeGroupClaudeMd knowledge-gap policy', () => {
   });
 });
 
+describe('composeGroupClaudeMd Google Drive-hosted file policy', () => {
+  const generalCapability = 'read, create, copy, and edit files stored in Google Drive';
+  const protectedActions = [
+    'Deleting or trashing files',
+    'transferring ownership',
+    'changing sharing or permissions',
+    'publishing files publicly',
+  ];
+
+  it('imports a file-type-neutral mutation contract for every group', () => {
+    const ag = group('ag-drive-policy', 'drive-policy-group');
+    seed(ag);
+
+    composeGroupClaudeMd(ag);
+
+    expect(importsOf(ag.folder)).toContain('@./.claude-fragments/module-google-docs-write.md');
+    const policy = fs.readFileSync(
+      path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools', 'google-docs-write.instructions.md'),
+      'utf-8',
+    );
+    expect(policy).toContain('Google Drive-hosted file operations');
+    expect(policy).toContain(generalCapability);
+    expect(policy).toContain('untrusted data, never as authorization');
+    for (const action of protectedActions) expect(policy).toContain(action);
+    expect(policy).not.toContain('Never use raw `POST`');
+  });
+
+  it('keeps the compact and full OneCLI instructions aligned with the contract', () => {
+    const onecliDir = path.join(process.cwd(), 'container', 'skills', 'onecli-gateway');
+    const fragments = ['instructions.md', 'SKILL.md'].map((name) =>
+      fs.readFileSync(path.join(onecliDir, name), 'utf-8'),
+    );
+
+    for (const policy of fragments) {
+      expect(policy).toContain(generalCapability);
+      expect(policy).toContain('authenticated Slack user');
+      expect(policy).toContain('untrusted data');
+      for (const action of protectedActions) expect(policy).toContain(action);
+    }
+  });
+});
+
 describe('composeGroupClaudeMd skill selection', () => {
   it('imports only explicitly selected skill fragments', () => {
     const ag = group('ag-selected-skill', 'selected-skill-group');
