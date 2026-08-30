@@ -57,6 +57,9 @@ export interface ForwardedMessageContext {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ForwardedContextExtractor = (raw: Record<string, any>) => ForwardedMessageContext[];
 
+/** Extract bounded user-visible text from platform-specific structured content. */
+export type AdditionalTextExtractor = (raw: Record<string, unknown>) => string[];
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   /**
@@ -75,6 +78,8 @@ export interface ChatSdkBridgeConfig {
   extractReplyContext?: ReplyContextExtractor;
   /** Platform-specific forwarded-message extraction. */
   extractForwardedContext?: ForwardedContextExtractor;
+  /** Platform-specific structured content to append to the visible message text. */
+  extractAdditionalText?: AdditionalTextExtractor;
   /**
    * Whether this platform uses threads as the primary conversation unit.
    * See `ChannelAdapter.supportsThreads`. Declared by the calling channel
@@ -112,7 +117,7 @@ export interface ChatSdkBridgeConfig {
  */
 export async function serializeChatSdkInboundMessage(
   message: ChatMessage,
-  config: Pick<ChatSdkBridgeConfig, 'extractReplyContext' | 'extractForwardedContext'>,
+  config: Pick<ChatSdkBridgeConfig, 'extractReplyContext' | 'extractForwardedContext' | 'extractAdditionalText'>,
   isMention: boolean,
   isGroup?: boolean,
   isThreadSubscribed = false,
@@ -160,6 +165,17 @@ export async function serializeChatSdkInboundMessage(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const forwardedMessages = config.extractForwardedContext(message.raw as Record<string, any>);
     if (forwardedMessages.length > 0) serialized.forwardedMessages = forwardedMessages;
+  }
+
+  // Preserve only platform-selected, bounded user-visible structured content
+  // before the full raw payload is intentionally discarded. The extractor is
+  // platform-owned so this generic bridge never learns Slack's block schema.
+  if (config.extractAdditionalText && message.raw) {
+    const additions = config.extractAdditionalText(message.raw as Record<string, unknown>).filter(Boolean);
+    if (additions.length > 0) {
+      const visibleText = typeof serialized.text === 'string' ? serialized.text.trimEnd() : '';
+      serialized.text = [visibleText, ...additions].filter(Boolean).join('\n\n');
+    }
   }
 
   // Project chat-sdk's nested author into the flat sender fields the router

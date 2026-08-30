@@ -1,4 +1,5 @@
 import type { ForwardedMessageContext } from './chat-sdk-bridge.js';
+import { extractSlackTableTextFromBlocks } from './slack-table-context.js';
 
 const MAX_FORWARDED_MESSAGES = 8;
 const MAX_FORWARDED_TOTAL_TEXT_LENGTH = 40_000;
@@ -56,13 +57,15 @@ function collectBlockText(value: unknown, parts: string[], depth = 0): void {
 
 function extractAttachmentText(attachment: SlackForwardAttachment): string | undefined {
   const direct = stringValue(attachment.text) ?? stringValue(attachment.fallback);
-  if (direct) return direct;
+  const tableText = extractSlackTableTextFromBlocks([attachment.blocks, attachment.message_blocks]).join('\n\n');
+  if (direct) return tableText ? `${direct}\n\n${tableText}` : direct;
 
   const blockParts: string[] = [];
   collectBlockText(attachment.blocks, blockParts);
   collectBlockText(attachment.message_blocks, blockParts);
   const blockText = blockParts.join(' ').replace(/\s+/g, ' ').trim();
-  if (blockText) return blockText;
+  const structuredText = [blockText, tableText].filter(Boolean).join('\n\n');
+  if (structuredText) return structuredText;
 
   return stringValue(attachment.title);
 }

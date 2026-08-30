@@ -12,6 +12,7 @@ import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { extractSlackForwardedMessages } from './slack-forwarded-context.js';
 import { listSlackChannelResources } from './slack-resources.js';
+import { extractSlackTableText } from './slack-table-context.js';
 
 registerChannelAdapter('slack', {
   factory: () => {
@@ -32,6 +33,7 @@ registerChannelAdapter('slack', {
       concurrency: 'concurrent',
       supportsThreads: true,
       extractForwardedContext: extractSlackForwardedMessages,
+      extractAdditionalText: extractSlackTableText,
     });
     bridge.resolveChannelName = async (platformId: string) => {
       try {

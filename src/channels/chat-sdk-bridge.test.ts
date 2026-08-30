@@ -101,6 +101,86 @@ describe('serializeChatSdkInboundMessage attachments', () => {
   });
 });
 
+describe('serializeChatSdkInboundMessage structured text', () => {
+  it('appends platform-normalized text before dropping the raw payload', async () => {
+    const extractAdditionalText = vi.fn(() => ['Slack table 1\n```tsv\nA\tB\n1\t2\n```']);
+    const message = new Message({
+      id: 'slack-table-1',
+      threadId: 'slack:C123:1700000000.000100',
+      text: '@Bobi compare the rows',
+      formatted: parseMarkdown('@Bobi compare the rows'),
+      raw: { blocks: [{ type: 'table', rows: [] }] },
+      attachments: [],
+      author: {
+        userId: 'U123',
+        userName: 'goren',
+        fullName: 'Goren',
+        isBot: false,
+        isMe: false,
+      },
+      metadata: { dateSent: new Date(0), edited: false },
+    });
+
+    const inbound = await serializeChatSdkInboundMessage(message, { extractAdditionalText }, true, true);
+    const content = inbound.content as { text?: string; raw?: unknown };
+
+    expect(extractAdditionalText).toHaveBeenCalledWith(expect.objectContaining({ blocks: expect.any(Array) }));
+    expect(content.text).toBe('@Bobi compare the rows\n\nSlack table 1\n```tsv\nA\tB\n1\t2\n```');
+    expect(content.raw).toBeUndefined();
+  });
+
+  it('uses structured text as the visible body when Slack supplies no fallback text', async () => {
+    const message = new Message({
+      id: 'slack-table-only',
+      threadId: 'slack:C123:1700000000.000200',
+      text: '',
+      formatted: parseMarkdown(''),
+      raw: { blocks: [{ type: 'table', rows: [] }] },
+      attachments: [],
+      author: {
+        userId: 'U123',
+        userName: 'goren',
+        fullName: 'Goren',
+        isBot: false,
+        isMe: false,
+      },
+      metadata: { dateSent: new Date(0), edited: false },
+    });
+
+    const inbound = await serializeChatSdkInboundMessage(
+      message,
+      { extractAdditionalText: () => ['Slack table 1\n```tsv\nA\n```'] },
+      true,
+      true,
+    );
+
+    expect((inbound.content as { text?: string }).text).toBe('Slack table 1\n```tsv\nA\n```');
+  });
+
+  it('leaves ordinary messages byte-for-byte unchanged when no structured text is found', async () => {
+    const message = new Message({
+      id: 'slack-plain',
+      threadId: 'slack:C123:1700000000.000300',
+      text: 'ordinary message  ',
+      formatted: parseMarkdown('ordinary message  '),
+      raw: { blocks: [{ type: 'section' }] },
+      attachments: [],
+      author: {
+        userId: 'U123',
+        userName: 'goren',
+        fullName: 'Goren',
+        isBot: false,
+        isMe: false,
+      },
+      metadata: { dateSent: new Date(0), edited: false },
+    });
+
+    const inbound = await serializeChatSdkInboundMessage(message, { extractAdditionalText: () => [] }, true, true);
+
+    expect((inbound.content as { text?: string }).text).toBe('ordinary message  ');
+  });
+});
+
 describe('createChatSdkBridge', () => {
   // The bridge is now transport-only: forward inbound events, relay outbound
   // ops. All per-wiring engage / accumulate / drop / subscribe decisions live

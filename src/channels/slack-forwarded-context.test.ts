@@ -61,6 +61,75 @@ describe('extractSlackForwardedMessages', () => {
     ).toEqual([{ text: 'Check <@U456> context', sender: 'U123', sourceUrl: undefined, timestamp: undefined }]);
   });
 
+  it('keeps forwarded table cells inside attributed quoted context', () => {
+    expect(
+      extractSlackForwardedMessages({
+        attachments: [
+          {
+            is_msg_unfurl: true,
+            channel_id: 'C123',
+            ts: '1700000000.000100',
+            author_name: 'Omer',
+            blocks: [
+              {
+                type: 'table',
+                rows: [
+                  [
+                    { type: 'raw_text', text: 'Region' },
+                    { type: 'raw_text', text: 'Pallets' },
+                  ],
+                  [
+                    { type: 'raw_text', text: 'West' },
+                    { type: 'raw_number', value: 15 },
+                  ],
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: 'Slack table 1\n```tsv\nRegion\tPallets\nWest\t15\n```',
+        sender: 'Omer',
+        sourceUrl: undefined,
+        timestamp: '1700000000.000100',
+      },
+    ]);
+  });
+
+  it('keeps tables nested in forwarded message blocks', () => {
+    expect(
+      extractSlackForwardedMessages({
+        attachments: [
+          {
+            is_msg_unfurl: true,
+            author_name: 'Omer',
+            message_blocks: [
+              {
+                message: {
+                  blocks: [
+                    {
+                      type: 'table',
+                      rows: [[{ type: 'raw_text', text: 'Region' }], [{ type: 'raw_text', text: 'West' }]],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: 'Slack table 1\n```tsv\nRegion\nWest\n```',
+        sender: 'Omer',
+        sourceUrl: undefined,
+        timestamp: undefined,
+      },
+    ]);
+  });
+
   it('ignores ordinary URL unfurls and malformed attachments', () => {
     expect(
       extractSlackForwardedMessages({
