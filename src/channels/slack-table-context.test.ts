@@ -92,6 +92,29 @@ describe('extractSlackTableText', () => {
     ).toEqual(['Slack table 1\n```tsv\n@here / <!subteam^S123>\n```']);
   });
 
+  it('preserves boundaries between top-level rich-text blocks', () => {
+    expect(
+      extractSlackTableText({
+        blocks: [
+          {
+            type: 'table',
+            rows: [
+              [
+                {
+                  type: 'rich_text',
+                  elements: [
+                    { type: 'rich_text_section', elements: [{ type: 'text', text: 'North' }] },
+                    { type: 'rich_text_section', elements: [{ type: 'text', text: 'West' }] },
+                  ],
+                },
+              ],
+            ],
+          },
+        ],
+      }),
+    ).toEqual(['Slack table 1\n```tsv\nNorth ↵ West\n```']);
+  });
+
   it('finds tables carried inside Slack attachments', () => {
     expect(
       extractSlackTableText({

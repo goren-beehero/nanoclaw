@@ -64,7 +64,10 @@ function renderCell(value: unknown): string {
     if (typeof cell.text === 'string') return cell.text;
     return typeof cell.value === 'number' && Number.isFinite(cell.value) ? String(cell.value) : '';
   }
-  if (type === 'rich_text') return renderRichText(cell.elements);
+  if (type === 'rich_text') {
+    if (!Array.isArray(cell.elements)) return '';
+    return cell.elements.map((element) => renderRichText(element)).join('\n');
+  }
   return '';
 }
 
