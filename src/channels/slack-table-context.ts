@@ -113,11 +113,20 @@ function collectCandidateBlocks(raw: Record<string, unknown>): unknown[] {
  * message text; the platform payload and unrelated blocks remain private.
  */
 export function extractSlackTableText(raw: Record<string, unknown>): string[] {
+  return renderCandidateTables(collectCandidateBlocks(raw));
+}
+
+/** Render table blocks already isolated from a containing Slack structure. */
+export function extractSlackTableTextFromBlocks(blocks: unknown): string[] {
+  return renderCandidateTables(Array.isArray(blocks) ? blocks : []);
+}
+
+function renderCandidateTables(candidates: unknown[]): string[] {
   const tables: string[] = [];
   const seen = new Set<string>();
   let remaining = MAX_TOTAL_TEXT_LENGTH;
 
-  for (const candidate of collectCandidateBlocks(raw)) {
+  for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
     const block = candidate as SlackTableBlock;
     if (block.type !== 'table' && block.type !== 'data_table') continue;
