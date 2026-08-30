@@ -35,6 +35,14 @@ function renderRichText(value: unknown, depth = 0): string {
     const channelId = nonemptyString(node.channel_id);
     return channelId ? `<#${channelId}>` : '';
   }
+  if (type === 'broadcast') {
+    const range = nonemptyString(node.range);
+    return range ? `@${range}` : '';
+  }
+  if (type === 'usergroup') {
+    const usergroupId = nonemptyString(node.usergroup_id);
+    return usergroupId ? `<!subteam^${usergroupId}>` : '';
+  }
   if (type === 'emoji') {
     const name = nonemptyString(node.name);
     return name ? `:${name}:` : '';
@@ -118,7 +126,28 @@ export function extractSlackTableText(raw: Record<string, unknown>): string[] {
 
 /** Render table blocks already isolated from a containing Slack structure. */
 export function extractSlackTableTextFromBlocks(blocks: unknown): string[] {
-  return renderCandidateTables(Array.isArray(blocks) ? blocks : []);
+  const candidates: unknown[] = [];
+  collectNestedTableBlocks(blocks, candidates);
+  return renderCandidateTables(candidates);
+}
+
+function collectNestedTableBlocks(value: unknown, candidates: unknown[], depth = 0): void {
+  if (depth > 10 || value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectNestedTableBlocks(item, candidates, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object') return;
+
+  const node = value as Record<string, unknown>;
+  if (node.type === 'table' || node.type === 'data_table') {
+    candidates.push(node);
+    return;
+  }
+
+  collectNestedTableBlocks(node.blocks, candidates, depth + 1);
+  collectNestedTableBlocks(node.message_blocks, candidates, depth + 1);
+  collectNestedTableBlocks(node.message, candidates, depth + 1);
 }
 
 function renderCandidateTables(candidates: unknown[]): string[] {

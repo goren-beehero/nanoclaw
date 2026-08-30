@@ -74,8 +74,14 @@ describe('extractSlackForwardedMessages', () => {
               {
                 type: 'table',
                 rows: [
-                  [{ type: 'raw_text', text: 'Region' }, { type: 'raw_text', text: 'Pallets' }],
-                  [{ type: 'raw_text', text: 'West' }, { type: 'raw_number', value: 15 }],
+                  [
+                    { type: 'raw_text', text: 'Region' },
+                    { type: 'raw_text', text: 'Pallets' },
+                  ],
+                  [
+                    { type: 'raw_text', text: 'West' },
+                    { type: 'raw_number', value: 15 },
+                  ],
                 ],
               },
             ],
@@ -88,6 +94,38 @@ describe('extractSlackForwardedMessages', () => {
         sender: 'Omer',
         sourceUrl: undefined,
         timestamp: '1700000000.000100',
+      },
+    ]);
+  });
+
+  it('keeps tables nested in forwarded message blocks', () => {
+    expect(
+      extractSlackForwardedMessages({
+        attachments: [
+          {
+            is_msg_unfurl: true,
+            author_name: 'Omer',
+            message_blocks: [
+              {
+                message: {
+                  blocks: [
+                    {
+                      type: 'table',
+                      rows: [[{ type: 'raw_text', text: 'Region' }], [{ type: 'raw_text', text: 'West' }]],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: 'Slack table 1\n```tsv\nRegion\nWest\n```',
+        sender: 'Omer',
+        sourceUrl: undefined,
+        timestamp: undefined,
       },
     ]);
   });

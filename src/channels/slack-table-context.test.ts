@@ -63,6 +63,35 @@ describe('extractSlackTableText', () => {
     ]);
   });
 
+  it('preserves broadcast and user-group mentions in rich-text cells', () => {
+    expect(
+      extractSlackTableText({
+        blocks: [
+          {
+            type: 'table',
+            rows: [
+              [
+                {
+                  type: 'rich_text',
+                  elements: [
+                    {
+                      type: 'rich_text_section',
+                      elements: [
+                        { type: 'broadcast', range: 'here' },
+                        { type: 'text', text: ' / ' },
+                        { type: 'usergroup', usergroup_id: 'S123' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            ],
+          },
+        ],
+      }),
+    ).toEqual(['Slack table 1\n```tsv\n@here / <!subteam^S123>\n```']);
+  });
+
   it('finds tables carried inside Slack attachments', () => {
     expect(
       extractSlackTableText({

@@ -57,7 +57,7 @@ function collectBlockText(value: unknown, parts: string[], depth = 0): void {
 
 function extractAttachmentText(attachment: SlackForwardAttachment): string | undefined {
   const direct = stringValue(attachment.text) ?? stringValue(attachment.fallback);
-  const tableText = extractSlackTableTextFromBlocks(attachment.blocks).join('\n\n');
+  const tableText = extractSlackTableTextFromBlocks([attachment.blocks, attachment.message_blocks]).join('\n\n');
   if (direct) return tableText ? `${direct}\n\n${tableText}` : direct;
 
   const blockParts: string[] = [];
