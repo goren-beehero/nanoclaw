@@ -80,6 +80,26 @@ describe('extractSlackTableText', () => {
     ).toEqual(['Slack table 1\n```tsv\ninside attachment\n```']);
   });
 
+  it('leaves tables from forwarded-message attachments in quoted context', () => {
+    expect(
+      extractSlackTableText({
+        attachments: [
+          {
+            is_msg_unfurl: true,
+            channel_id: 'C123',
+            ts: '1700000000.000100',
+            blocks: [
+              {
+                type: 'table',
+                rows: [[{ type: 'raw_text', text: 'forwarded table' }]],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
   it('keeps row boundaries while making tabs and newlines safe for TSV', () => {
     expect(
       extractSlackTableText({

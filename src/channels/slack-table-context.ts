@@ -90,7 +90,17 @@ function collectCandidateBlocks(raw: Record<string, unknown>): unknown[] {
   if (Array.isArray(raw.attachments)) {
     for (const attachment of raw.attachments) {
       if (!attachment || typeof attachment !== 'object') continue;
-      const blocks = (attachment as Record<string, unknown>).blocks;
+      const record = attachment as Record<string, unknown>;
+      // Forwarded-message attachments are rendered separately as quoted
+      // context. Promoting their tables into the sender's active message text
+      // would lose provenance and duplicate the forwarded content.
+      if (
+        record.is_msg_unfurl === true ||
+        (nonemptyString(record.channel_id) !== undefined && nonemptyString(record.ts) !== undefined)
+      ) {
+        continue;
+      }
+      const blocks = record.blocks;
       if (Array.isArray(blocks)) candidates.push(...blocks);
     }
   }
