@@ -12,6 +12,8 @@ import {
   clearContinuation,
   clearCurrentActionSource,
   clearCurrentInReplyTo,
+  consumeThreadDisengagement,
+  getCurrentActionSource,
   migrateLegacyContinuation,
   setContinuation,
   setCurrentActionSource,
@@ -548,6 +550,20 @@ export async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
+        const actionSource = getCurrentActionSource();
+        if (consumeCurrentThreadDisengagement()) {
+          log(`Thread disengagement requested for ${actionSource} — suppressing final result`);
+          if (event.text) {
+            notifyExchangeComplete(onExchangeComplete, {
+              prompt: archivePrompts[0] ?? initialPrompt,
+              result: event.text,
+              continuation: queryContinuation ?? initialContinuation,
+              status: 'completed',
+            });
+          }
+          archivePrompts.shift();
+          continue;
+        }
         if (event.text) {
           const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
@@ -619,6 +635,12 @@ export async function processQuery(
   }
 
   return { continuation: queryContinuation };
+}
+
+/** Consume a silence marker only for the interactive turn that created it. */
+export function consumeCurrentThreadDisengagement(): boolean {
+  const actionSource = getCurrentActionSource();
+  return actionSource ? consumeThreadDisengagement(actionSource) : false;
 }
 
 function latestTriggerMessageId(messages: MessageInRow[]): string | null {
