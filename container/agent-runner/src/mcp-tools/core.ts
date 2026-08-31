@@ -301,7 +301,7 @@ export const disengageThread: McpToolDefinition = {
   tool: {
     name: 'disengage_thread',
     description:
-      'End automatic participation in the current interactive group thread after the task is complete or a person asks the agent to stop. This suppresses the current final reply and stops unmentioned follow-ups from routing. A later direct mention re-engages the thread. Do not use in tasks, channel roots, or when a normal answer is still required.',
+      'End automatic participation in the current interactive group thread after the task is complete or a person asks the agent to stop. task_complete preserves the current final answer; human_requested suppresses the current final reply. Both stop unmentioned follow-ups from routing, and a later direct mention re-engages the thread. Do not use in tasks or channel roots.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -346,9 +346,13 @@ export const disengageThread: McpToolDefinition = {
         reason,
       }),
     });
-    requestThreadDisengagement(sourceMessageId);
+    if (reason === 'human_requested') requestThreadDisengagement(sourceMessageId);
     log(`disengage_thread: ${source.channel_type}/${source.platform_id}/${source.thread_id}`);
-    return ok('Thread disengagement queued. Do not emit a user-visible final response for this turn.');
+    return reason === 'human_requested'
+      ? ok('Thread disengagement queued. Do not emit a user-visible final response for this turn.')
+      : ok(
+          'Thread disengagement queued. Return the completed user-facing answer in your final response; later unmentioned follow-ups will not route.',
+        );
   },
 };
 

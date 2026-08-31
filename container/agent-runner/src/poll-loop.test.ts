@@ -446,6 +446,35 @@ describe('error result with no <message> envelope', () => {
 });
 
 describe('thread disengagement result suppression', () => {
+  it('delivers the exact task-complete turn when no silence marker exists', async () => {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id)
+         VALUES ('local-cli', 'Local CLI', 'channel', 'discord', 'chan-1', NULL)`,
+      )
+      .run();
+    setCurrentActionSource('m-done');
+    const { query, pushes } = makeResultQuery({
+      type: 'result',
+      text: '<message to="local-cli">completed answer before disengagement</message>',
+    });
+
+    await processQuery(
+      query,
+      { ...ERR_ROUTING, inReplyTo: 'm-done' },
+      ['m-done'],
+      'claude',
+      undefined,
+      'prompt',
+      undefined,
+    );
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe('completed answer before disengagement');
+    expect(pushes).toHaveLength(0);
+  });
+
   it('suppresses the exact marked turn without a wrap nudge or chat delivery', async () => {
     setCurrentActionSource('m-stop');
     requestThreadDisengagement('m-stop');
