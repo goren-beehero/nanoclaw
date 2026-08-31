@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './db/connection.js';
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
+import { consumeThreadDisengagement, requestThreadDisengagement, setCurrentActionSource } from './db/session-state.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError, processQuery } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
@@ -441,6 +442,31 @@ describe('error result with no <message> envelope', () => {
     expect(getUndeliveredMessages()).toHaveLength(0);
     expect(pushes).toHaveLength(1);
     expect(pushes[0]).toContain('was not delivered');
+  });
+});
+
+describe('thread disengagement result suppression', () => {
+  it('suppresses the exact marked turn without a wrap nudge or chat delivery', async () => {
+    setCurrentActionSource('m-stop');
+    requestThreadDisengagement('m-stop');
+    const { query, pushes } = makeResultQuery({
+      type: 'result',
+      text: '<message to="local-cli">acknowledgement that must stay silent</message>',
+    });
+
+    await processQuery(
+      query,
+      { ...ERR_ROUTING, inReplyTo: 'm-stop' },
+      ['m-stop'],
+      'claude',
+      undefined,
+      'prompt',
+      undefined,
+    );
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+    expect(pushes).toHaveLength(0);
+    expect(consumeThreadDisengagement('m-stop')).toBe(false);
   });
 });
 
