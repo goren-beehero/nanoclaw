@@ -633,6 +633,10 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // the original inbound event.
       await state.subscribe(threadId);
     },
+
+    async unsubscribe(_platformId: string, threadId: string) {
+      await state.unsubscribe(threadId);
+    },
   };
 
   // Only expose openDM when the underlying Chat SDK adapter implements it.

@@ -92,6 +92,7 @@ export function clearContinuation(providerName: string): void {
  */
 const IN_REPLY_TO_KEY = 'current_in_reply_to';
 const ACTION_SOURCE_KEY = 'current_action_source';
+const THREAD_DISENGAGEMENT_SOURCE_KEY = 'thread_disengagement_source';
 
 /**
  * Ignore a stamp older than this. The poll loop clears the stamp in a
@@ -144,4 +145,21 @@ export function getCurrentActionSource(): string | null {
   const age = Date.now() - new Date(row.updated_at).getTime();
   if (!Number.isFinite(age) || age > IN_REPLY_TO_MAX_AGE_MS) return null;
   return row.value;
+}
+
+/**
+ * Mark the current inbound turn as intentionally silent after requesting
+ * host-side thread disengagement. The marker crosses the MCP subprocess /
+ * poll-loop process boundary through outbound.db.
+ */
+export function requestThreadDisengagement(sourceMessageId: string): void {
+  setValue(THREAD_DISENGAGEMENT_SOURCE_KEY, sourceMessageId);
+}
+
+/** Consume only the marker for this exact inbound turn. */
+export function consumeThreadDisengagement(sourceMessageId: string): boolean {
+  const markedSource = getValue(THREAD_DISENGAGEMENT_SOURCE_KEY);
+  if (markedSource !== sourceMessageId) return false;
+  deleteValue(THREAD_DISENGAGEMENT_SOURCE_KEY);
+  return true;
 }

@@ -23,3 +23,4 @@ import './agent-to-agent/index.js';
 import './self-mod/index.js';
 import './knowledge-gaps/index.js';
 import './google-docs-write/index.js';
+import './thread-participation/index.js';

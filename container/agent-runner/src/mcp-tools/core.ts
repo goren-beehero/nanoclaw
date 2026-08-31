@@ -12,7 +12,7 @@ import path from 'path';
 import { findByName, getAllDestinations } from '../destinations.js';
 import { openInboundDb } from '../db/connection.js';
 import { getMessageIdBySeq, getRoutingBySeq, writeMessageOut } from '../db/messages-out.js';
-import { getCurrentActionSource, getCurrentInReplyTo } from '../db/session-state.js';
+import { getCurrentActionSource, getCurrentInReplyTo, requestThreadDisengagement } from '../db/session-state.js';
 import { getSessionRouting } from '../db/session-routing.js';
 import { registerTools } from './server.js';
 import type { McpToolDefinition } from './types.js';
@@ -297,4 +297,59 @@ export const addReaction: McpToolDefinition = {
   },
 };
 
-registerTools([sendMessage, sendFile, editMessage, addReaction]);
+export const disengageThread: McpToolDefinition = {
+  tool: {
+    name: 'disengage_thread',
+    description:
+      'End automatic participation in the current interactive group thread after the task is complete or a person asks the agent to stop. This suppresses the current final reply and stops unmentioned follow-ups from routing. A later direct mention re-engages the thread. Do not use in tasks, channel roots, or when a normal answer is still required.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        reason: {
+          type: 'string',
+          enum: ['task_complete', 'human_requested'],
+          description: 'Generic lifecycle reason.',
+        },
+      },
+      required: ['reason'],
+    },
+  },
+  async handler(args) {
+    const reason = typeof args.reason === 'string' ? args.reason.trim() : '';
+    if (reason !== 'task_complete' && reason !== 'human_requested') {
+      return err('reason must be task_complete or human_requested');
+    }
+
+    const sourceMessageId = getCurrentActionSource();
+    const source = sourceMessageId ? getActionSourceRouting() : null;
+    if (
+      !sourceMessageId ||
+      !source ||
+      (source.kind !== 'chat' && source.kind !== 'chat-sdk') ||
+      !source.channel_type ||
+      !source.platform_id ||
+      !source.thread_id
+    ) {
+      return err('thread disengagement requires an active interactive threaded conversation');
+    }
+
+    writeMessageOut({
+      id: generateId(),
+      in_reply_to: sourceMessageId,
+      kind: 'system',
+      content: JSON.stringify({
+        action: 'disengage_thread',
+        source_message_id: sourceMessageId,
+        channel_type: source.channel_type,
+        platform_id: source.platform_id,
+        thread_id: source.thread_id,
+        reason,
+      }),
+    });
+    requestThreadDisengagement(sourceMessageId);
+    log(`disengage_thread: ${source.channel_type}/${source.platform_id}/${source.thread_id}`);
+    return ok('Thread disengagement queued. Do not emit a user-visible final response for this turn.');
+  },
+};
+
+registerTools([sendMessage, sendFile, editMessage, addReaction, disengageThread]);
