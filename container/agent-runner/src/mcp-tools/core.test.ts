@@ -183,26 +183,42 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
 });
 
 describe('disengage_thread MCP tool', () => {
-  it.each(['chat', 'chat-sdk'] as const)('queues an exact-route action and marks a %s turn silent', async (kind) => {
-    seedInboundMessage('stop-source', kind, 'slack', 'C-CURRENT', 'thread-current');
+  it.each(['chat', 'chat-sdk'] as const)(
+    'queues an exact-route task-complete action without silencing the %s final answer',
+    async (kind) => {
+      seedInboundMessage('stop-source', kind, 'slack', 'C-CURRENT', 'thread-current');
+      publishCurrentActionSource('stop-source');
+
+      const result = await disengageThread.handler({ reason: 'task_complete' });
+
+      expect(result.isError).not.toBe(true);
+      const out = getUndeliveredMessages();
+      expect(out).toHaveLength(1);
+      expect(out[0].kind).toBe('system');
+      expect(JSON.parse(out[0].content)).toMatchObject({
+        action: 'disengage_thread',
+        source_message_id: 'stop-source',
+        channel_type: 'slack',
+        platform_id: 'C-CURRENT',
+        thread_id: 'thread-current',
+        reason: 'task_complete',
+      });
+      expect(consumeThreadDisengagement('stop-source')).toBe(false);
+      expect(result.content[0]?.text).toContain('Return the completed user-facing answer');
+    },
+  );
+
+  it('marks a human-requested disengagement turn silent', async () => {
+    seedInboundMessage('stop-source', 'chat', 'slack', 'C-CURRENT', 'thread-current');
     publishCurrentActionSource('stop-source');
 
-    const result = await disengageThread.handler({ reason: 'task_complete' });
+    const result = await disengageThread.handler({ reason: 'human_requested' });
 
     expect(result.isError).not.toBe(true);
-    const out = getUndeliveredMessages();
-    expect(out).toHaveLength(1);
-    expect(out[0].kind).toBe('system');
-    expect(JSON.parse(out[0].content)).toMatchObject({
-      action: 'disengage_thread',
-      source_message_id: 'stop-source',
-      channel_type: 'slack',
-      platform_id: 'C-CURRENT',
-      thread_id: 'thread-current',
-      reason: 'task_complete',
-    });
+    expect(getUndeliveredMessages()).toHaveLength(1);
     expect(consumeThreadDisengagement('stop-source')).toBe(true);
     expect(consumeThreadDisengagement('stop-source')).toBe(false);
+    expect(result.content[0]?.text).toContain('Do not emit a user-visible final response');
   });
 
   it.each([
