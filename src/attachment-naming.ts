@@ -14,6 +14,8 @@
  * goes through the safety guard unchanged.
  */
 
+import path from 'path';
+
 // Map common MIME types to canonical file extensions. Without an extension,
 // agents (and humans) can't tell what kind of file landed in the inbox, and
 // tools keyed on extension (image viewers, exiftool, etc.) misbehave.
@@ -66,4 +68,24 @@ export function deriveAttachmentName(att: Record<string, unknown>): string {
   }
   const ts = Date.now();
   return ext ? `attachment-${ts}.${ext}` : `attachment-${ts}`;
+}
+
+/**
+ * Keep the first attachment name unchanged and suffix later collisions before
+ * the final extension. The caller reserves names only after a successful
+ * exclusive write, so a pre-existing file or symlink is still refused rather
+ * than silently bypassed with a different name.
+ */
+export function uniqueAttachmentName(preferredName: string, reservedNames: ReadonlySet<string>): string {
+  if (!reservedNames.has(preferredName)) return preferredName;
+
+  const ext = path.extname(preferredName);
+  const stem = ext ? preferredName.slice(0, -ext.length) : preferredName;
+  let suffix = 2;
+  let candidate = `${stem}-${suffix}${ext}`;
+  while (reservedNames.has(candidate)) {
+    suffix += 1;
+    candidate = `${stem}-${suffix}${ext}`;
+  }
+  return candidate;
 }
