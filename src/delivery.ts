@@ -141,7 +141,6 @@ export interface ChannelDeliveryAdapter {
     instance?: string,
   ): Promise<string | undefined>;
   setTyping?(channelType: string, platformId: string, threadId: string | null, instance?: string): Promise<void>;
-  unsubscribe?(channelType: string, platformId: string, threadId: string, instance?: string): Promise<void>;
 }
 
 let deliveryAdapter: ChannelDeliveryAdapter | null = null;
