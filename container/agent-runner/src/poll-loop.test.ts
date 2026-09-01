@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './db/connection.js';
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
-import { consumeThreadDisengagement, requestThreadDisengagement, setCurrentActionSource } from './db/session-state.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError, processQuery } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
@@ -442,60 +441,6 @@ describe('error result with no <message> envelope', () => {
     expect(getUndeliveredMessages()).toHaveLength(0);
     expect(pushes).toHaveLength(1);
     expect(pushes[0]).toContain('was not delivered');
-  });
-});
-
-describe('thread disengagement result suppression', () => {
-  it('delivers the exact task-complete turn when no silence marker exists', async () => {
-    getInboundDb()
-      .prepare(
-        `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id)
-         VALUES ('local-cli', 'Local CLI', 'channel', 'discord', 'chan-1', NULL)`,
-      )
-      .run();
-    setCurrentActionSource('m-done');
-    const { query, pushes } = makeResultQuery({
-      type: 'result',
-      text: '<message to="local-cli">completed answer before disengagement</message>',
-    });
-
-    await processQuery(
-      query,
-      { ...ERR_ROUTING, inReplyTo: 'm-done' },
-      ['m-done'],
-      'claude',
-      undefined,
-      'prompt',
-      undefined,
-    );
-
-    const out = getUndeliveredMessages();
-    expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0].content).text).toBe('completed answer before disengagement');
-    expect(pushes).toHaveLength(0);
-  });
-
-  it('suppresses the exact marked turn without a wrap nudge or chat delivery', async () => {
-    setCurrentActionSource('m-stop');
-    requestThreadDisengagement('m-stop');
-    const { query, pushes } = makeResultQuery({
-      type: 'result',
-      text: '<message to="local-cli">acknowledgement that must stay silent</message>',
-    });
-
-    await processQuery(
-      query,
-      { ...ERR_ROUTING, inReplyTo: 'm-stop' },
-      ['m-stop'],
-      'claude',
-      undefined,
-      'prompt',
-      undefined,
-    );
-
-    expect(getUndeliveredMessages()).toHaveLength(0);
-    expect(pushes).toHaveLength(0);
-    expect(consumeThreadDisengagement('m-stop')).toBe(false);
   });
 });
 

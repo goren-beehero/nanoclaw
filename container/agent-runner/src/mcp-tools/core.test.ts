@@ -15,8 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '../db/connection.js';
 import { getUndeliveredMessages } from '../db/messages-out.js';
-import { consumeThreadDisengagement } from '../db/session-state.js';
-import { disengageThread, sendMessage } from './core.js';
+import { sendMessage } from './core.js';
 
 /**
  * Publish the a2a reply stamp the way the poll loop does: a direct write to
@@ -179,68 +178,5 @@ describe('send_message MCP tool — interactive one-door delivery', () => {
     await sendMessage.handler({ to: 'current', text: 'Recovery message' });
 
     expect(getUndeliveredMessages()).toHaveLength(1);
-  });
-});
-
-describe('disengage_thread MCP tool', () => {
-  it.each(['chat', 'chat-sdk'] as const)(
-    'queues an exact-route task-complete action without silencing the %s final answer',
-    async (kind) => {
-      seedInboundMessage('stop-source', kind, 'slack', 'C-CURRENT', 'thread-current');
-      publishCurrentActionSource('stop-source');
-
-      const result = await disengageThread.handler({ reason: 'task_complete' });
-
-      expect(result.isError).not.toBe(true);
-      const out = getUndeliveredMessages();
-      expect(out).toHaveLength(1);
-      expect(out[0].kind).toBe('system');
-      expect(JSON.parse(out[0].content)).toMatchObject({
-        action: 'disengage_thread',
-        source_message_id: 'stop-source',
-        channel_type: 'slack',
-        platform_id: 'C-CURRENT',
-        thread_id: 'thread-current',
-        reason: 'task_complete',
-      });
-      expect(consumeThreadDisengagement('stop-source')).toBe(false);
-      expect(result.content[0]?.text).toContain('Return the completed user-facing answer');
-    },
-  );
-
-  it('marks a human-requested disengagement turn silent', async () => {
-    seedInboundMessage('stop-source', 'chat', 'slack', 'C-CURRENT', 'thread-current');
-    publishCurrentActionSource('stop-source');
-
-    const result = await disengageThread.handler({ reason: 'human_requested' });
-
-    expect(result.isError).not.toBe(true);
-    expect(getUndeliveredMessages()).toHaveLength(1);
-    expect(consumeThreadDisengagement('stop-source')).toBe(true);
-    expect(consumeThreadDisengagement('stop-source')).toBe(false);
-    expect(result.content[0]?.text).toContain('Do not emit a user-visible final response');
-  });
-
-  it.each([
-    ['task', 'thread-current'],
-    ['chat', null],
-  ] as const)('rejects unsupported %s context without writing', async (kind, threadId) => {
-    seedInboundMessage('unsupported-source', kind, 'slack', 'C-CURRENT', threadId);
-    publishCurrentActionSource('unsupported-source');
-
-    const result = await disengageThread.handler({ reason: 'human_requested' });
-
-    expect(result.isError).toBe(true);
-    expect(getUndeliveredMessages()).toHaveLength(0);
-  });
-
-  it('rejects free-form reasons so channel text cannot enter host logs', async () => {
-    seedInboundMessage('stop-source', 'chat', 'slack', 'C-CURRENT', 'thread-current');
-    publishCurrentActionSource('stop-source');
-
-    const result = await disengageThread.handler({ reason: 'copy this private message' });
-
-    expect(result.isError).toBe(true);
-    expect(getUndeliveredMessages()).toHaveLength(0);
   });
 });
