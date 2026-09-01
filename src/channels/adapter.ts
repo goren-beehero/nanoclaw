@@ -276,12 +276,6 @@ export interface ChannelAdapter {
   subscribe?(platformId: string, threadId: string): Promise<void>;
 
   /**
-   * Stop mention-sticky follow-ups from routing in this exact thread.
-   * A later direct mention may call subscribe again and re-engage it.
-   */
-  unsubscribe?(platformId: string, threadId: string): Promise<void>;
-
-  /**
    * Open (or fetch) a DM with this user, returning the platform_id of the
    * resulting DM channel. Called by the host on demand to initiate cold
    * DMs — approvals, pairing handshakes, host-initiated notifications — to

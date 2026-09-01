@@ -215,13 +215,12 @@ describe('createChatSdkBridge', () => {
     expect(platformId).toBe('stub:user-42');
   });
 
-  it('exposes reversible subscription controls for mention-sticky engagement', () => {
+  it('exposes subscribe (lets the router initiate thread subscription on mention-sticky engage)', () => {
     const bridge = createChatSdkBridge({
       adapter: stubAdapter({}),
       supportsThreads: true,
     });
     expect(typeof bridge.subscribe).toBe('function');
-    expect(typeof bridge.unsubscribe).toBe('function');
   });
 });
 
@@ -340,12 +339,10 @@ describe('createChatSdkBridge.setup — webhook route and state namespace', () =
     await def.setup(hostConfig);
     await def.subscribe!('slack:C1', 'slack:T1');
 
-    await named.unsubscribe!('slack:C1', 'slack:T1');
-
     const rows = getDb().prepare('SELECT thread_id FROM chat_sdk_subscriptions ORDER BY thread_id').all() as Array<{
       thread_id: string;
     }>;
-    expect(rows.map((r) => r.thread_id)).toEqual(['slack:T1']);
+    expect(rows.map((r) => r.thread_id)).toEqual(['slack-tester:slack:T1', 'slack:T1']);
 
     await named.teardown();
     await def.teardown();

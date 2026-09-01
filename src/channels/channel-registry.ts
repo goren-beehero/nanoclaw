@@ -119,16 +119,6 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
       const adapter = getChannelAdapterExact(instance ?? channelType);
       await adapter?.setTyping?.(platformId, threadId);
     },
-    async unsubscribe(channelType: string, platformId: string, threadId: string, instance?: string): Promise<void> {
-      const adapter = getChannelAdapterExact(instance ?? channelType);
-      if (!adapter) {
-        throw new MissingChannelAdapterError(channelType, instance);
-      }
-      if (!adapter.unsubscribe) {
-        throw new Error(`Channel adapter '${instance ?? channelType}' does not support thread disengagement`);
-      }
-      await adapter.unsubscribe(platformId, threadId);
-    },
   };
 }
 
