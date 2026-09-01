@@ -45,11 +45,14 @@ Before writing to the host, record:
 1. The exact Bobi host and NanoClaw release being operated.
 2. The mounted repository's canonical origin, approved ref, and commit.
 3. The stable host path and its current path, type, hash, and mode manifest.
-4. Active containers, workers, and processing claims that could overlap the
+4. The mounted root directory's mode, owner, and group, plus every host and
+   container runtime identity that must traverse it. Git tree metadata and a
+   descendant-file manifest do not capture this complete access contract.
+5. Active containers, workers, and processing claims that could overlap the
    activation window.
-5. A timestamped backup of the active tree stored outside the active repository
+6. A timestamped backup of the active tree stored outside the active repository
    paths, plus a verified off-instance copy.
-6. Explicit approval for the repository activation. Approval to update mounted
+7. Explicit approval for the repository activation. Approval to update mounted
    content does not imply approval to restart NanoClaw or terminate containers.
 
 Stop if the source commit, active tree, backup, or production authority is
@@ -67,7 +70,12 @@ ambiguous.
    manifest from the staged directory.
 6. Require the manifests to match exactly. Classify every added, removed,
    changed, or mode-changed path before activation.
-7. Run prompt-free repository contract tests against the staged release when
+7. Explicitly apply the approved root mode, owner, and group to the staged
+   directory. Staging-directory tools commonly create an owner-only root; do
+   not infer root traversability from readable descendant files.
+8. As the host runtime identity, traverse the staged root and read the routed
+   entrypoint while confirming its expected hash.
+9. Run prompt-free repository contract tests against the staged release when
    the repository provides them.
 
 Do not use `git pull`, in-place `rsync`, or an overlay copy against the active
@@ -87,19 +95,26 @@ record:
 
 After activation:
 
-1. Verify that the stable host path has the approved manifest and permissions.
-2. Verify the rollback path still has the previous manifest.
-3. Confirm NanoClaw's configured additional mount still names the stable path
+1. Verify that the stable host path has the approved manifest and the approved
+   root mode, owner, and group.
+2. As the host runtime identity, traverse the stable root and read the routed
+   entrypoint while confirming its expected hash. A privileged hash check does
+   not prove that the runtime can read the mount.
+3. Verify the rollback path still has the previous manifest and its recorded
+   root mode, owner, and group.
+4. Confirm NanoClaw's configured additional mount still names the stable path
    and remains read-only.
-4. Confirm no unrelated runtime state, database, durable memory, or repository
+5. Confirm no unrelated runtime state, database, durable memory, or repository
    was changed.
 
 ## Acceptance
 
 Acceptance requires evidence from a container created after activation:
 
-1. Verify the mounted manifest or selected release hashes inside the fresh
-   container.
+1. As the container runtime identity, traverse the mounted root and read the
+   routed entrypoint while confirming its expected hash. A declared mount,
+   healthy service, successful extraction, or privileged host read is not
+   equivalent evidence.
 2. Start a fresh `#bobi-testing` parent after the fresh container is available.
 3. Exercise the changed routing or behavior with a representative natural
    prompt.
@@ -120,7 +135,16 @@ same activation discipline:
 3. Move or exchange the current release out of the stable path and restore the
    retained prior release.
 4. Verify the restored host manifest and read-only mount configuration.
-5. Validate from a fresh container and fresh conversation.
+5. Restore and verify the retained root's recorded mode, owner, and group.
+6. Require an actual routed-entrypoint read from the host runtime identity and
+   every active worker that can serve traffic. Workers intentionally pinned to
+   different releases must each read the expected entrypoint for their mounted
+   release.
+7. Validate from a fresh container and fresh conversation.
+
+If any required identity cannot traverse the root or read the entrypoint, the
+rollback is incomplete even when hashes, extraction, mounts, and service health
+look correct. Stop and recover before declaring success.
 
 Do not delete either release or the off-instance backup until the rollout is
 accepted and its rollback window has closed.
@@ -132,9 +156,11 @@ Keep the deployment record outside agent-readable mounted repositories. Include:
 - Host and NanoClaw release
 - Source origin, ref, and commit
 - Expected, staged, active, and rollback manifest fingerprints
+- Stable, staged, active, and rollback root mode/owner/group evidence
 - Backup locations and checksums
 - Activation method and gate evidence
 - Pre-existing container/session visibility
+- Host-runtime and per-serving-worker routed-entrypoint read evidence
 - Fresh-container and fresh-thread validation evidence
 - Final accept, rollback, or unresolved decision
 
