@@ -75,6 +75,10 @@ describe('uniqueAttachmentName', () => {
     expect(uniqueAttachmentName('IMAGE.png', new Set(['image.png']))).toBe('IMAGE-2.png');
   });
 
+  it('suffixes canonically equivalent Unicode filenames', () => {
+    expect(uniqueAttachmentName('e\u0301.png', new Set(['é.png']))).toBe('e\u0301-2.png');
+  });
+
   it('keeps suffixed ASCII and Unicode filenames within the filesystem component limit', () => {
     for (const preferred of [`${'a'.repeat(251)}.png`, `${'🐝'.repeat(62)}abc.png`]) {
       expect(Buffer.byteLength(preferred)).toBe(255);

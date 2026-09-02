@@ -94,7 +94,7 @@ export function uniqueAttachmentName(preferredName: string, reservedNames: Reado
 }
 
 function filenameKey(name: string): string {
-  return name.toLowerCase();
+  return name.normalize('NFC').toLowerCase();
 }
 
 function collisionName(stem: string, ext: string, suffix: number): string {
