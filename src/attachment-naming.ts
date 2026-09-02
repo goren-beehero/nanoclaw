@@ -16,6 +16,8 @@
 
 import path from 'path';
 
+const MAX_FILENAME_BYTES = 255;
+
 // Map common MIME types to canonical file extensions. Without an extension,
 // agents (and humans) can't tell what kind of file landed in the inbox, and
 // tools keyed on extension (image viewers, exiftool, etc.) misbehave.
@@ -82,10 +84,32 @@ export function uniqueAttachmentName(preferredName: string, reservedNames: Reado
   const ext = path.extname(preferredName);
   const stem = ext ? preferredName.slice(0, -ext.length) : preferredName;
   let suffix = 2;
-  let candidate = `${stem}-${suffix}${ext}`;
+  let candidate = collisionName(stem, ext, suffix);
   while (reservedNames.has(candidate)) {
     suffix += 1;
-    candidate = `${stem}-${suffix}${ext}`;
+    candidate = collisionName(stem, ext, suffix);
   }
   return candidate;
+}
+
+function collisionName(stem: string, ext: string, suffix: number): string {
+  const marker = `-${suffix}`;
+  const maxExtBytes = Math.max(0, MAX_FILENAME_BYTES - Buffer.byteLength(marker));
+  const boundedExt = truncateUtf8(ext, maxExtBytes);
+  const maxStemBytes = MAX_FILENAME_BYTES - Buffer.byteLength(marker) - Buffer.byteLength(boundedExt);
+  return `${truncateUtf8(stem, maxStemBytes)}${marker}${boundedExt}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+
+  let result = '';
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
 }

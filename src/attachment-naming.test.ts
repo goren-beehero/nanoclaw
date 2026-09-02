@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { deriveAttachmentName, extForMime } from './attachment-naming.js';
+import { deriveAttachmentName, extForMime, uniqueAttachmentName } from './attachment-naming.js';
 
 describe('extForMime', () => {
   it('returns empty for undefined / non-string / empty', () => {
@@ -67,5 +67,19 @@ describe('deriveAttachmentName', () => {
   it('does not crash on non-string mimeType (defensive against buggy bridges)', () => {
     expect(() => deriveAttachmentName({ mimeType: { foo: 'bar' } })).not.toThrow();
     expect(deriveAttachmentName({ mimeType: { foo: 'bar' } })).toMatch(/^attachment-\d+$/);
+  });
+});
+
+describe('uniqueAttachmentName', () => {
+  it('keeps suffixed ASCII and Unicode filenames within the filesystem component limit', () => {
+    for (const preferred of [`${'a'.repeat(251)}.png`, `${'🐝'.repeat(62)}abc.png`]) {
+      expect(Buffer.byteLength(preferred)).toBe(255);
+
+      const unique = uniqueAttachmentName(preferred, new Set([preferred]));
+
+      expect(Buffer.byteLength(unique)).toBeLessThanOrEqual(255);
+      expect(unique).toMatch(/-2\.png$/);
+      expect(unique).not.toContain('�');
+    }
   });
 });
