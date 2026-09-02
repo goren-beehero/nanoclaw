@@ -14,6 +14,10 @@
  * goes through the safety guard unchanged.
  */
 
+import path from 'path';
+
+const MAX_FILENAME_BYTES = 255;
+
 // Map common MIME types to canonical file extensions. Without an extension,
 // agents (and humans) can't tell what kind of file landed in the inbox, and
 // tools keyed on extension (image viewers, exiftool, etc.) misbehave.
@@ -66,4 +70,51 @@ export function deriveAttachmentName(att: Record<string, unknown>): string {
   }
   const ts = Date.now();
   return ext ? `attachment-${ts}.${ext}` : `attachment-${ts}`;
+}
+
+/**
+ * Keep the first attachment name unchanged and suffix later collisions before
+ * the final extension. The caller reserves names only after a successful
+ * exclusive write, so a pre-existing file or symlink is still refused rather
+ * than silently bypassed with a different name.
+ */
+export function uniqueAttachmentName(preferredName: string, reservedNames: ReadonlySet<string>): string {
+  const reservedKeys = new Set(Array.from(reservedNames, filenameKey));
+  if (!reservedKeys.has(filenameKey(preferredName))) return preferredName;
+
+  const ext = path.extname(preferredName);
+  const stem = ext ? preferredName.slice(0, -ext.length) : preferredName;
+  let suffix = 2;
+  let candidate = collisionName(stem, ext, suffix);
+  while (reservedKeys.has(filenameKey(candidate))) {
+    suffix += 1;
+    candidate = collisionName(stem, ext, suffix);
+  }
+  return candidate;
+}
+
+function filenameKey(name: string): string {
+  return name.normalize('NFC').toLowerCase();
+}
+
+function collisionName(stem: string, ext: string, suffix: number): string {
+  const marker = `-${suffix}`;
+  const maxExtBytes = Math.max(0, MAX_FILENAME_BYTES - Buffer.byteLength(marker));
+  const boundedExt = truncateUtf8(ext, maxExtBytes);
+  const maxStemBytes = MAX_FILENAME_BYTES - Buffer.byteLength(marker) - Buffer.byteLength(boundedExt);
+  return `${truncateUtf8(stem, maxStemBytes)}${marker}${boundedExt}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+
+  let result = '';
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
 }

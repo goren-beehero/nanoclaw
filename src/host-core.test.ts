@@ -254,6 +254,104 @@ describe('session manager', () => {
     expect(fs.readFileSync(expected, 'utf-8')).toBe('PNGBYTES');
   });
 
+  it('should save every same-named attachment with a deterministic suffix', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+
+    writeSessionMessage('ag-1', session.id, {
+      id: 'msg-duplicates',
+      kind: 'chat',
+      timestamp: now(),
+      content: JSON.stringify({
+        text: 'compare all three',
+        attachments: [
+          { name: 'image.png', data: Buffer.from('FIRST').toString('base64') },
+          { name: 'image.png', data: Buffer.from('SECOND').toString('base64') },
+          { name: 'image.png', data: Buffer.from('THIRD').toString('base64') },
+        ],
+      }),
+    });
+
+    const db = new Database(inboundDbPath('ag-1', session.id));
+    const row = db.prepare('SELECT content FROM messages_in WHERE id = ?').get('msg-duplicates') as {
+      content: string;
+    };
+    db.close();
+    const parsed = JSON.parse(row.content) as {
+      attachments: Array<{ name: string; localPath: string; data?: string }>;
+    };
+
+    expect(parsed.attachments).toEqual([
+      { name: 'image.png', localPath: 'inbox/msg-duplicates/image.png' },
+      { name: 'image-2.png', localPath: 'inbox/msg-duplicates/image-2.png' },
+      { name: 'image-3.png', localPath: 'inbox/msg-duplicates/image-3.png' },
+    ]);
+    expect(
+      parsed.attachments.map((attachment) =>
+        fs.readFileSync(path.join(sessionDir('ag-1', session.id), attachment.localPath), 'utf-8'),
+      ),
+    ).toEqual(['FIRST', 'SECOND', 'THIRD']);
+  });
+
+  it('should apply the same collision naming to non-image and unnamed attachments', () => {
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(1_788_260_000_000);
+    initSessionFolder('ag-1', 'sess-test');
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+
+    writeSessionMessage('ag-1', session.id, {
+      id: 'msg-mixed-duplicates',
+      kind: 'chat',
+      timestamp: now(),
+      content: JSON.stringify({
+        attachments: [
+          { name: 'report.pdf', data: Buffer.from('PDF-1').toString('base64') },
+          { name: 'report.pdf', data: Buffer.from('PDF-2').toString('base64') },
+          { mimeType: 'text/plain', data: Buffer.from('TXT-1').toString('base64') },
+          { mimeType: 'text/plain', data: Buffer.from('TXT-2').toString('base64') },
+        ],
+      }),
+    });
+    dateNow.mockRestore();
+
+    const db = new Database(inboundDbPath('ag-1', session.id));
+    const row = db.prepare('SELECT content FROM messages_in WHERE id = ?').get('msg-mixed-duplicates') as {
+      content: string;
+    };
+    db.close();
+    const parsed = JSON.parse(row.content) as {
+      attachments: Array<{ name: string; localPath: string; data?: string }>;
+    };
+
+    expect(parsed.attachments.map(({ name }) => name)).toEqual([
+      'report.pdf',
+      'report-2.pdf',
+      'attachment-1788260000000.txt',
+      'attachment-1788260000000-2.txt',
+    ]);
+    expect(new Set(parsed.attachments.map(({ localPath }) => localPath)).size).toBe(4);
+    expect(parsed.attachments.every(({ data }) => data === undefined)).toBe(true);
+  });
+
+  it('should not bypass a pre-existing attachment target by renaming it', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    const inboxDir = path.join(sessionDir('ag-1', session.id), 'inbox', 'msg-existing');
+    fs.mkdirSync(inboxDir, { recursive: true });
+    fs.writeFileSync(path.join(inboxDir, 'report.pdf'), 'ORIGINAL');
+
+    writeSessionMessage('ag-1', session.id, {
+      id: 'msg-existing',
+      kind: 'chat',
+      timestamp: now(),
+      content: JSON.stringify({
+        attachments: [{ name: 'report.pdf', data: Buffer.from('REPLACEMENT').toString('base64') }],
+      }),
+    });
+
+    expect(fs.readFileSync(path.join(inboxDir, 'report.pdf'), 'utf-8')).toBe('ORIGINAL');
+    expect(fs.readdirSync(inboxDir)).toEqual(['report.pdf']);
+  });
+
   it('should resolve to existing session (shared mode)', () => {
     const { session: s1, created: c1 } = resolveSession('ag-1', 'mg-1', null, 'shared');
     expect(c1).toBe(true);

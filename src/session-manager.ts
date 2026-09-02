@@ -14,7 +14,7 @@ import type Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { deriveAttachmentName } from './attachment-naming.js';
+import { deriveAttachmentName, uniqueAttachmentName } from './attachment-naming.js';
 import { isSafeAttachmentName } from './attachment-safety.js';
 import type { OutboundFile } from './channels/adapter.js';
 import { DATA_DIR } from './config.js';
@@ -390,20 +390,22 @@ function extractAttachmentFiles(
   // the per-message subdir before any write lands outside the sandbox (#2828).
   let inboxDir: string | null = null;
   let inboxResolved = false;
+  const writtenNames = new Set<string>();
 
   let changed = false;
   for (const att of attachments) {
     if (typeof att.data !== 'string') continue;
 
     const rawName = deriveAttachmentName(att);
-    const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
-    if (filename !== rawName) {
+    const safeName = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
+    if (safeName !== rawName) {
       log.warn('Refused unsafe attachment filename, would escape inbox', {
         messageId,
         rawName,
-        replacement: filename,
+        replacement: safeName,
       });
     }
+    const filename = uniqueAttachmentName(safeName, writtenNames);
 
     if (!inboxResolved) {
       inboxDir = ensureContainedInboxDir(inboxRoot, messageId, { messageId });
@@ -433,6 +435,7 @@ function extractAttachmentFiles(
     att.name = filename;
     att.localPath = `inbox/${messageId}/${filename}`;
     delete att.data;
+    writtenNames.add(filename);
     changed = true;
     log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
   }
