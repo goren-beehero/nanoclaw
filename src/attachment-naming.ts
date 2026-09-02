@@ -79,17 +79,22 @@ export function deriveAttachmentName(att: Record<string, unknown>): string {
  * than silently bypassed with a different name.
  */
 export function uniqueAttachmentName(preferredName: string, reservedNames: ReadonlySet<string>): string {
-  if (!reservedNames.has(preferredName)) return preferredName;
+  const reservedKeys = new Set(Array.from(reservedNames, filenameKey));
+  if (!reservedKeys.has(filenameKey(preferredName))) return preferredName;
 
   const ext = path.extname(preferredName);
   const stem = ext ? preferredName.slice(0, -ext.length) : preferredName;
   let suffix = 2;
   let candidate = collisionName(stem, ext, suffix);
-  while (reservedNames.has(candidate)) {
+  while (reservedKeys.has(filenameKey(candidate))) {
     suffix += 1;
     candidate = collisionName(stem, ext, suffix);
   }
   return candidate;
+}
+
+function filenameKey(name: string): string {
+  return name.toLowerCase();
 }
 
 function collisionName(stem: string, ext: string, suffix: number): string {

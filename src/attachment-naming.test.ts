@@ -71,6 +71,10 @@ describe('deriveAttachmentName', () => {
 });
 
 describe('uniqueAttachmentName', () => {
+  it('suffixes case-only collisions on case-insensitive filesystems', () => {
+    expect(uniqueAttachmentName('IMAGE.png', new Set(['image.png']))).toBe('IMAGE-2.png');
+  });
+
   it('keeps suffixed ASCII and Unicode filenames within the filesystem component limit', () => {
     for (const preferred of [`${'a'.repeat(251)}.png`, `${'🐝'.repeat(62)}abc.png`]) {
       expect(Buffer.byteLength(preferred)).toBe(255);
