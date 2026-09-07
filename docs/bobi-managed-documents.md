@@ -21,12 +21,19 @@ and helpers resolve below `/workspace/extra/agents-kb/KB/skills/`, like existing
 capabilities. Do not add private wrappers, symlinks or special skill selections.
 The shared-router additions are the two intent-specific skill routes.
 
-Import the canonical router in the existing local instruction extension using
-the same Claude instruction-import syntax used by NanoClaw's composed entry:
+Import the canonical router in `groups/<agent>/instructions.prepend.md`, the
+supported standing-instruction source used by `readGroupPersona` and copied
+into the composed persona fragment at spawn. Use the existing import syntax:
 
 ```
 @/workspace/extra/agents-kb/AGENTS.md
 ```
+
+Do not use legacy `CLAUDE.local.md` for this activation and do not edit generated
+`CLAUDE.md` or `.claude-fragments/persona.md` directly. Verify the import in the
+fresh worker's composed persona fragment. Preserve all other standing text.
+Remove an experimental router import from legacy `CLAUDE.local.md` if present;
+do not copy that legacy file's whole contents into standing instructions.
 
 Keep the existing BeeHero routing text unchanged. Do not duplicate skill routes
 or keep the experimental expanded entry sentences. A conditional instruction to
