@@ -19,7 +19,7 @@ describe('BeeHero Python/AWS tooling in the agent image', () => {
   });
 
   it('installs the AWS and agents-team Python packages', () => {
-    for (const pkg of ['awscli', 'boto3', 'awswrangler', 'plotly', 'astral==3.2']) {
+    for (const pkg of ['awscli', 'boto3', 'awswrangler', 'openpyxl==3.1.5', 'plotly', 'astral==3.2']) {
       expect(dockerfile).toContain(pkg);
     }
   });
