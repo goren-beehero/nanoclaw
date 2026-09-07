@@ -21,18 +21,21 @@ and helpers resolve below `/workspace/extra/agents-kb/KB/skills/`, like existing
 capabilities. Do not add private wrappers, symlinks or special skill selections.
 The shared-router additions are the two intent-specific skill routes.
 
-The existing Bobi entry instruction scopes KB discovery to "BeeHero requests".
-Extend that existing sentence (do not add a second routing mechanism) to:
+Import the canonical router in the existing local instruction extension using
+the same Claude instruction-import syntax used by NanoClaw's composed entry:
 
-> For every BeeHero request and every file/document request (including
-> spreadsheets, comments, attachments and named document collections), even
-> when the message does not mention BeeHero:
+```
+@/workspace/extra/agents-kb/AGENTS.md
+```
 
-Keep the following existing direct-AGENTS.md lookup and all other routing rules
-unchanged. This is an activation prerequisite: otherwise a generic file request
-can skip the router entirely. Do not require the user to call a collection a
-"pool" before discovering its route. It does not activate pool workflows for ordinary
-attachments or one-off conversions; the canonical skill retains that boundary.
+Keep the existing BeeHero routing text unchanged. Do not duplicate skill routes
+or keep the experimental expanded entry sentences. A conditional instruction to
+look up the router proved unreliable for generic file requests and transitions
+from one-off work into an explicit pool operation. Importing the router makes
+the existing direct routes available without that preliminary intent guess.
+Only the router is imported, not every skill; the selected skill is still read
+on demand. Ordinary attachments and conversions remain ad hoc. This adds the
+router's context to the session; validate unrelated behavior and one-off latency.
 
 Back up and remove only the obsolete managed-document section from Bobi's private
 instructions and the two private prototype skill copies. Preserve every other
