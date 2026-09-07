@@ -19,7 +19,18 @@ rename. It is not a second implementation.
 Use the existing mounted agents-kb tree and its normal AGENTS.md routing. Skills
 and helpers resolve below `/workspace/extra/agents-kb/KB/skills/`, like existing
 capabilities. Do not add private wrappers, symlinks or special skill selections.
-The only shared-router additions are the two intent-specific skill routes.
+The shared-router additions are the two intent-specific skill routes.
+
+The existing Bobi entry instruction scopes KB discovery to "BeeHero requests".
+Extend that existing sentence (do not add a second routing mechanism) to:
+
+> For every BeeHero request, including managed document/pool operations and
+> native spreadsheet comments even when the message does not mention BeeHero:
+
+Keep the following existing direct-AGENTS.md lookup and all other routing rules
+unchanged. This is an activation prerequisite: otherwise a generic file request
+can skip the router entirely. It does not activate pool workflows for ordinary
+attachments or one-off conversions; the canonical skill retains that boundary.
 
 Back up and remove only the obsolete managed-document section from Bobi's private
 instructions and the two private prototype skill copies. Preserve every other
