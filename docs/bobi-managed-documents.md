@@ -21,16 +21,16 @@ and helpers resolve below `/workspace/extra/agents-kb/KB/skills/`, like existing
 capabilities. Do not add private wrappers, symlinks or special skill selections.
 The shared-router additions are the two intent-specific skill routes.
 
-Import the canonical router in `groups/<agent>/instructions.prepend.md`, the
+Reference the canonical router in `groups/<agent>/instructions.prepend.md`, the
 supported standing-instruction source used by `readGroupPersona` and copied
-into the composed persona fragment at spawn. Use the existing import syntax:
+into the composed persona fragment at spawn. Add this standing instruction:
 
 ```
-@/workspace/extra/agents-kb/AGENTS.md
+Before answering the first request in a fresh session, read /workspace/extra/agents-kb/AGENTS.md and follow its direct routes. Recheck those routes when the user changes intent, including from a one-off file request to a pool operation. Ordinary files remain ad hoc unless the user requests a managed workflow.
 ```
 
 Do not use legacy `CLAUDE.local.md` for this activation and do not edit generated
-`CLAUDE.md` or `.claude-fragments/persona.md` directly. Verify the import in the
+`CLAUDE.md` or `.claude-fragments/persona.md` directly. Verify this instruction in the
 fresh worker's composed persona fragment. Preserve all other standing text.
 Remove an experimental router import from legacy `CLAUDE.local.md` if present;
 do not copy that legacy file's whole contents into standing instructions.
@@ -38,11 +38,11 @@ do not copy that legacy file's whole contents into standing instructions.
 Keep the existing BeeHero routing text unchanged. Do not duplicate skill routes
 or keep the experimental expanded entry sentences. A conditional instruction to
 look up the router proved unreliable for generic file requests and transitions
-from one-off work into an explicit pool operation. Importing the router makes
-the existing direct routes available without that preliminary intent guess.
-Only the router is imported, not every skill; the selected skill is still read
-on demand. Ordinary attachments and conversions remain ad hoc. This adds the
-router's context to the session; validate unrelated behavior and one-off latency.
+from one-off work into an explicit pool operation. A nested router import also
+failed that live transition. Use the explicit lookup in the supported standing
+source, not a new per-feature selector. Only the router is read initially;
+the selected skill is read on demand. This adds one router read and its context
+per fresh session; validate unrelated behavior and one-off latency.
 
 Back up and remove only the obsolete managed-document section from Bobi's private
 instructions and the two private prototype skill copies. Preserve every other
