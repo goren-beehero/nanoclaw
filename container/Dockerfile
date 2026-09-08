@@ -78,6 +78,7 @@ RUN python${PYTHON_VERSION} -m venv "${BEEHERO_PYTHON_VENV}" && \
         awscli \
         boto3 \
         awswrangler \
+        openpyxl==3.1.5 \
         plotly \
         astral==3.2
 
