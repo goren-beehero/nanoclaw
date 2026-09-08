@@ -16,10 +16,26 @@ rename. It is not a second implementation.
 
 ## Scoped activation
 
-Use the existing mounted agents-kb tree and its normal AGENTS.md routing. Skills
-and helpers resolve below `/workspace/extra/agents-kb/KB/skills/`, like existing
-capabilities. Do not add private wrappers, symlinks or special skill selections.
-The shared-router additions are the two intent-specific skill routes.
+Use the existing mounted agents-kb tree and its AGENTS.md routes. Expose the two
+canonical skill directories through Claude's standard project skill discovery:
+
+```
+/workspace/agent/.claude/skills/managed-document-prototype
+  -> /workspace/extra/agents-kb/KB/skills/managed-document-prototype
+/workspace/agent/.claude/skills/sheets-native-comments
+  -> /workspace/extra/agents-kb/KB/skills/sheets-native-comments
+```
+
+Create these links in the corresponding host group `.claude/skills/` directory,
+using the container paths above as targets. Checkpoint each path's prior state
+and verify the checkpoint off-instance first. Reuse an identical link; stop on
+any other existing entry rather than overwriting it. Verify targets from inside
+a worker, since container paths need not resolve on the host.
+
+These are discovery links, not copied skills or wrappers: descriptions,
+instructions and helpers remain owned by the pinned agents-kb tree. Preserve
+all other project skills. Leave `.claude-shared/skills/` alone; NanoClaw manages
+that separate directory for bundled container skills.
 
 Reference the canonical router in `groups/<agent>/instructions.prepend.md`, the
 supported standing-instruction source used by `readGroupPersona` and copied
@@ -40,9 +56,11 @@ or keep the experimental expanded entry sentences. A conditional instruction to
 look up the router proved unreliable for generic file requests and transitions
 from one-off work into an explicit pool operation. A nested router import also
 failed that live transition. Use the explicit lookup in the supported standing
-source, not a new per-feature selector. Only the router is read initially;
-the selected skill is read on demand. This adds one router read and its context
-per fresh session; validate unrelated behavior and one-off latency.
+source. Also make the canonical skills discoverable as above: a standing request
+to read a router is not a substitute for advertising installed capabilities in
+the native skill list. Skill descriptions are available at session startup and
+the selected skill body is loaded on demand. Validate unrelated behavior and
+one-off latency; the managed skill's opt-in boundary remains authoritative.
 
 Back up and remove only the obsolete managed-document section from Bobi's private
 instructions and the two private prototype skill copies. Preserve every other
@@ -67,16 +85,26 @@ root or copy Production state when configuration is absent.
    replace the rest of the KB or transfer evaluator artifacts. The tests are
    prompt-free unit contracts; live prompts/results stay outside mounted repos.
 4. Install the two scoped AGENTS.md routes and preserve the approved root config.
-   Verify content hashes, resolved skill/helper paths, effective config path,
+   Add the two native project discovery links above. Verify content hashes,
+   resolved skill/helper paths, effective config path,
    read-only KB mount and openpyxl 3.1.5 from the running image. Remove no real
    Drive data during code activation.
 5. Validate in fresh Slack threads: ordinary one-offs and follow-ups, explicit
    pool onboarding/create-like/edit/recall, existing-file identity and requester
    access, native comments and duplicate handling. Inspect loaded source paths,
-   not just the final answer. Keep prior-business-flow checks in the rollout bundle.
+   not just the final answer. Repeat create-like and recall in separate fresh
+   threads without naming skills/helpers in the user prompts. Verify each new
+   file's card, source lineage and requester access; a correct spreadsheet alone
+   is not a managed-workflow pass. Keep prior-business-flow checks in the bundle.
 6. Production cutover needs separate approval and its own fresh checks. Preserve
    existing wiring, auth, schedules and session state. Hold on failure; rollback
    requires operator approval and must not overwrite newer Drive content/cards.
+
+To remove discovery after an approved rollback, unlink only the two paths above
+after verifying that they still point to the exact recorded targets. Restore any
+checkpointed prior entries; keep the canonical KB source and Drive files/cards.
+Fresh sessions are required to verify both installation and removal. No running
+conversation needs to be deleted or reset for discovery installation.
 
 Run helper contracts with Python/openpyxl available:
 ```
