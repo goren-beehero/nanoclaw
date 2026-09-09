@@ -332,6 +332,20 @@ export function migrateMessagesInTable(db: Database.Database): void {
     // All existing rows are normal messages, so default 0.
     db.prepare('ALTER TABLE messages_in ADD COLUMN on_wake INTEGER NOT NULL DEFAULT 0').run();
   }
+  // Session DBs have no central migration runner. Create the retarget audit
+  // table lazily so already-live task sessions gain the supported operation.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_retarget_audit (
+      id               TEXT PRIMARY KEY,
+      timestamp        TEXT NOT NULL,
+      actor_user_id    TEXT NOT NULL,
+      actor_session_id TEXT NOT NULL,
+      series_id        TEXT NOT NULL,
+      task_row_id      TEXT NOT NULL,
+      before_json      TEXT NOT NULL,
+      after_json       TEXT NOT NULL
+    )
+  `);
 }
 
 /**

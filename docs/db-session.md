@@ -107,6 +107,26 @@ CREATE TABLE session_routing (
 
 Written by `writeSessionRouting()` on every container wake, derived from `sessions.messaging_group_id` + `sessions.thread_id`.
 
+### 2.5 `task_retarget_audit`
+
+Immutable before/after records for supported `ncl tasks retarget` operations. The
+audit row is inserted in the same transaction that updates the live task's
+route and `originSessionId`, so it is also the exact rollback payload.
+Existing session DBs create this table lazily on their next host open.
+
+```sql
+CREATE TABLE task_retarget_audit (
+  id               TEXT PRIMARY KEY,
+  timestamp        TEXT NOT NULL,
+  actor_user_id    TEXT NOT NULL,
+  actor_session_id TEXT NOT NULL,
+  series_id        TEXT NOT NULL,
+  task_row_id      TEXT NOT NULL,
+  before_json      TEXT NOT NULL,
+  after_json       TEXT NOT NULL
+);
+```
+
 ---
 
 ## 3. Sequence numbering invariant

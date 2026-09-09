@@ -224,6 +224,20 @@ CREATE TABLE IF NOT EXISTS session_routing (
   platform_id  TEXT,
   thread_id    TEXT
 );
+
+-- Immutable before/after record for supported scheduled-task retargets. This
+-- lives beside the task row so the route change and its rollback payload can
+-- commit in the same SQLite transaction.
+CREATE TABLE IF NOT EXISTS task_retarget_audit (
+  id               TEXT PRIMARY KEY,
+  timestamp        TEXT NOT NULL,
+  actor_user_id    TEXT NOT NULL,
+  actor_session_id TEXT NOT NULL,
+  series_id        TEXT NOT NULL,
+  task_row_id      TEXT NOT NULL,
+  before_json      TEXT NOT NULL,
+  after_json       TEXT NOT NULL
+);
 `;
 
 /** Container-owned: outbound messages + processing acknowledgments. */

@@ -34,6 +34,7 @@ import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
 import { resolveSlackThreadSuppression } from './modules/slack-thread-suppression.js';
 import { recordGoogleDocsWriteTurn } from './modules/google-docs-write/turn-authorization.js';
+import { recordTaskRetargetTurn } from './modules/scheduling/turn-authorization.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { ChannelAdapter, ChannelResource, InboundEvent } from './channels/adapter.js';
 
@@ -644,6 +645,7 @@ async function deliverToAgent(
     // Every engaged message replaces the prior turn, including non-owner
     // messages, so an old owner message cannot authorize a later request.
     recordGoogleDocsWriteTurn(session.id, sourceMessageId, userId);
+    recordTaskRetargetTurn(session.id, sourceMessageId, userId);
     // Typing indicator + wake are only for the engaged branch; accumulated
     // messages sit silently until a real trigger fires.
     // Typing fires via the adapter instance that owns this chat's row.

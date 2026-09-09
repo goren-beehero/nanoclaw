@@ -75,6 +75,24 @@ ncl tasks run <task-id> --group <agent-group-id>
 `run` also works while a task is paused. It queues one extra run and does not
 resume the recurring schedule.
 
+## Move a recurring task to the current Slack thread
+
+From the destination Slack thread, ask the agent to move the task there. The
+agent uses this command in that same turn:
+
+```bash
+ncl tasks retarget <task-id>
+```
+
+The command derives the exact channel and thread from the verified inbound
+Slack message; it does not accept destination aliases or raw route arguments.
+The sender must be an owner, admin, or member of the agent group. The existing
+task must already target the same Slack channel, have exactly one live
+occurrence, and not be due or processing. It updates the existing occurrence
+and its `originSessionId` together, while recording an atomic before/after
+audit row. Task id, schedule, prompt, state, and history are unchanged. Future
+recurrences and `ncl tasks run` occurrences inherit the new route.
+
 ## Script gates
 
 A task can run a Bash script before waking the agent. This is useful for

@@ -31,6 +31,7 @@ import {
   type ScheduledTaskRow,
   validateRecurrence,
 } from '../../modules/scheduling/create.js';
+import { retargetTaskCommand } from '../../modules/scheduling/retarget.js';
 import { inboundDbPath, withInboundDb } from '../../session-manager.js';
 import { registerResource } from '../crud.js';
 import { appendRunLog } from '../../modules/scheduling/run-log.js';
@@ -619,6 +620,14 @@ registerResource({
         { name: 'session', type: 'string', description: 'Limit to one task session id.' },
       ],
       handler: async (args, ctx) => runTaskCommand(args, ctx),
+    },
+    retarget: {
+      access: 'open',
+      description:
+        'Move one live recurring task to this exact Slack thread. The current Slack sender must be an owner, admin, or member of the agent group; the existing task must already target the same channel and must not be processing.',
+      args: [{ name: 'id', type: 'string', description: 'Task series id.', required: true }],
+      examples: [`# From the destination Slack thread:\nncl tasks retarget <task-id>`],
+      handler: async (args, ctx) => retargetTaskCommand(args, ctx),
     },
     pause: {
       access: 'open',

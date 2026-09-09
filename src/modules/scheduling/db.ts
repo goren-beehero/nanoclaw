@@ -95,6 +95,101 @@ export interface TaskUpdate {
   processAfter?: string;
 }
 
+export interface TaskRetargetSnapshot {
+  id: string;
+  seq: number;
+  status: string;
+  process_after: string | null;
+  recurrence: string | null;
+  platform_id: string | null;
+  channel_type: string | null;
+  thread_id: string | null;
+  content: string;
+}
+
+export interface TaskRetargetInput {
+  expected: TaskRetargetSnapshot;
+  seriesId: string;
+  actorUserId: string;
+  actorSessionId: string;
+  platformId: string;
+  channelType: string;
+  threadId: string;
+  content: string;
+  auditId: string;
+  timestamp: string;
+}
+
+/**
+ * Change one live occurrence in place and persist its exact before/after route
+ * and content in the same transaction. Every mutable scheduling field is an
+ * optimistic precondition, so a concurrent run/update cannot be overwritten.
+ */
+export function retargetTask(db: Database.Database, input: TaskRetargetInput): void {
+  const before = JSON.stringify(input.expected);
+  const after = JSON.stringify({
+    ...input.expected,
+    platform_id: input.platformId,
+    channel_type: input.channelType,
+    thread_id: input.threadId,
+    content: input.content,
+  });
+
+  const tx = db.transaction(() => {
+    const changed = db
+      .prepare(
+        `UPDATE messages_in
+            SET platform_id = @platformId,
+                channel_type = @channelType,
+                thread_id = @threadId,
+                content = @content
+          WHERE id = @id
+            AND seq = @seq
+            AND status = @status
+            AND process_after IS @processAfter
+            AND recurrence IS @recurrence
+            AND platform_id IS @expectedPlatformId
+            AND channel_type IS @expectedChannelType
+            AND thread_id IS @expectedThreadId
+            AND content = @expectedContent`,
+      )
+      .run({
+        id: input.expected.id,
+        seq: input.expected.seq,
+        status: input.expected.status,
+        processAfter: input.expected.process_after,
+        recurrence: input.expected.recurrence,
+        expectedPlatformId: input.expected.platform_id,
+        expectedChannelType: input.expected.channel_type,
+        expectedThreadId: input.expected.thread_id,
+        expectedContent: input.expected.content,
+        platformId: input.platformId,
+        channelType: input.channelType,
+        threadId: input.threadId,
+        content: input.content,
+      }).changes;
+
+    if (changed !== 1) throw new Error('task changed while retargeting; retry from the Slack thread');
+
+    db.prepare(
+      `INSERT INTO task_retarget_audit
+         (id, timestamp, actor_user_id, actor_session_id, series_id, task_row_id, before_json, after_json)
+       VALUES (@id, @timestamp, @actorUserId, @actorSessionId, @seriesId, @taskRowId, @beforeJson, @afterJson)`,
+    ).run({
+      id: input.auditId,
+      timestamp: input.timestamp,
+      actorUserId: input.actorUserId,
+      actorSessionId: input.actorSessionId,
+      seriesId: input.seriesId,
+      taskRowId: input.expected.id,
+      beforeJson: before,
+      afterJson: after,
+    });
+  });
+
+  tx();
+}
+
 // Merges content JSON in-place so callers can update prompt/script without
 // clobbering other fields. Matches by id OR series_id so the live next
 // occurrence of a recurring task is updated, not just the completed row the
