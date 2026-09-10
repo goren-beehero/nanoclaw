@@ -33,7 +33,7 @@ import {
   type ScheduledTaskRow,
   validateRecurrence,
 } from '../../modules/scheduling/create.js';
-import { getMessagingGroup, getMessagingGroupAgents } from '../../db/messaging-groups.js';
+import { getMessagingGroupAgents, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { isContainerRunningOrStarting } from '../../container-runner.js';
 import { inboundDbPath, outboundDbPath, withInboundDb } from '../../session-manager.js';
 import { registerResource } from '../crud.js';
@@ -421,19 +421,35 @@ function retargetTaskCommand(args: Record<string, unknown>, ctx: CallerContext) 
   }
 
   const callerSession = getSession(ctx.sessionId);
-  if (
-    !callerSession ||
-    callerSession.agent_group_id !== ctx.agentGroupId ||
-    !callerSession.messaging_group_id ||
-    callerSession.messaging_group_id !== ctx.messagingGroupId ||
-    !callerSession.thread_id
-  ) {
+  if (!callerSession || callerSession.agent_group_id !== ctx.agentGroupId) {
     throw new Error('task retarget requires the current interactive thread');
   }
-  const messagingGroup = getMessagingGroup(callerSession.messaging_group_id);
-  if (!messagingGroup || messagingGroup.channel_type !== 'slack') {
+
+  // A session row is not always the active conversation: agent-shared
+  // sessions deliberately have no messaging_group_id/thread_id. The newest
+  // routed chat row is the request the running agent is currently handling,
+  // so it is the authoritative destination for "this thread".
+  const currentRoute = withInbound(
+    callerSession,
+    (db) =>
+      db
+        .prepare(
+          `SELECT channel_type, platform_id, thread_id
+           FROM messages_in
+          WHERE kind IN ('chat', 'chat-sdk')
+            AND channel_type IS NOT NULL
+            AND platform_id IS NOT NULL
+            AND thread_id IS NOT NULL
+          ORDER BY seq DESC
+          LIMIT 1`,
+        )
+        .get() as { channel_type: string; platform_id: string; thread_id: string } | undefined,
+  );
+  if (!currentRoute || currentRoute.channel_type !== 'slack') {
     throw new Error('task retarget requires the current Slack thread');
   }
+  const messagingGroup = getMessagingGroupByPlatform(currentRoute.channel_type, currentRoute.platform_id);
+  if (!messagingGroup) throw new Error('the current Slack conversation is not registered');
   if (!getMessagingGroupAgents(messagingGroup.id).some((wiring) => wiring.agent_group_id === ctx.agentGroupId)) {
     throw new Error('the current Slack conversation is not wired to this agent group');
   }
@@ -470,7 +486,7 @@ function retargetTaskCommand(args: Record<string, unknown>, ctx: CallerContext) 
     retargetTaskSeries(db, id, {
       platformId: messagingGroup.platform_id,
       channelType: messagingGroup.channel_type,
-      threadId: callerSession.thread_id!,
+      threadId: currentRoute.thread_id,
       originSessionId: callerSession.id,
     }),
   );

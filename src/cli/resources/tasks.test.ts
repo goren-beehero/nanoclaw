@@ -33,7 +33,7 @@ import {
 import { createSession, findSessionByAgentGroup, getSessionsByAgentGroup, taskThreadId } from '../../db/sessions.js';
 import { countDueMessages } from '../../db/session-db.js';
 import { isContainerRunningOrStarting } from '../../container-runner.js';
-import { inboundDbPath, initSessionFolder, outboundDbPath } from '../../session-manager.js';
+import { inboundDbPath, initSessionFolder, outboundDbPath, writeSessionMessage } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { formatTasksTable } from '../format-tasks.js';
 import type { CallerContext } from '../frame.js';
@@ -129,6 +129,15 @@ function createRetargetThreads(): void {
       created_at: now(),
     });
     initSessionFolder('ag-1', id);
+    writeSessionMessage('ag-1', id, {
+      id: `request-${id}`,
+      kind: 'chat',
+      timestamp: now(),
+      channelType: 'slack',
+      platformId: 'C-retarget',
+      threadId,
+      content: JSON.stringify({ text: 'move the task here' }),
+    });
   }
 }
 
@@ -571,6 +580,49 @@ describe('tasks CLI resource', () => {
     const afterDb = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
     expect((afterDb.prepare('SELECT COUNT(*) AS c FROM messages_in').get() as { c: number }).c).toBe(beforeCount);
     afterDb.close();
+  });
+
+  it('derives the destination from the active chat route for an agent-shared session', async () => {
+    createRetargetThreads();
+    const created = await dispatch(
+      {
+        id: 'create-agent-shared-retarget',
+        command: 'tasks-create',
+        args: { name: 'agent-shared', prompt: 'x', recurrence: '0 9 * * *' },
+      },
+      agentCtx('ag-1', 'chat-old', 'mg-retarget'),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    createChatSession('ag-1', 'shared-chat');
+    writeSessionMessage('ag-1', 'shared-chat', {
+      id: 'request-shared-chat',
+      kind: 'chat',
+      timestamp: now(),
+      channelType: 'slack',
+      platformId: 'C-retarget',
+      threadId: '3000.0003',
+      content: JSON.stringify({ text: 'move the task here' }),
+    });
+    const moved = await dispatch(
+      {
+        id: 'move-from-agent-shared',
+        command: 'tasks-retarget',
+        args: { id: (created.data as { series_id: string }).series_id },
+      },
+      agentCtx('ag-1', 'shared-chat', ''),
+    );
+
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.data).toMatchObject({
+      to: {
+        platform_id: 'C-retarget',
+        thread_id: '3000.0003',
+        origin_session_id: 'shared-chat',
+      },
+    });
   });
 
   it('refuses running/starting or acknowledged work with zero writes', async () => {

@@ -179,8 +179,8 @@ export function retargetTaskSeries(
     let content: Record<string, unknown>;
     try {
       content = JSON.parse(row.content) as Record<string, unknown>;
-    } catch {
-      throw new Error(`task has unsupported legacy content: ${taskId}`);
+    } catch (error) {
+      throw new Error(`task has unsupported legacy content: ${taskId}`, { cause: error });
     }
     if (!content || Array.isArray(content) || typeof content !== 'object') {
       throw new Error(`task has unsupported content: ${taskId}`);
