@@ -16,6 +16,7 @@ import {
   pauseTask,
   resumeTask,
   getLiveTaskRowIds,
+  hasDueLiveTaskRow,
   retargetTaskSeries,
   updateTask,
   getCompletedRecurring,
@@ -295,6 +296,19 @@ describe('retargetTaskSeries', () => {
       }),
     });
   }
+
+  it('distinguishes a due pending row from an idle future or paused row', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'future-1', 'future-1', 'pending', null);
+    insertRoutedTask(db, 'paused-1', 'paused-1', 'paused', null);
+    insertRoutedTask(db, 'due-1', 'due-1', 'pending', null);
+    db.prepare("UPDATE messages_in SET process_after = '2000-01-01T00:00:00Z' WHERE id = 'due-1'").run();
+
+    expect(hasDueLiveTaskRow(db, 'future-1')).toBe(false);
+    expect(hasDueLiveTaskRow(db, 'paused-1')).toBe(false);
+    expect(hasDueLiveTaskRow(db, 'due-1')).toBe(true);
+    db.close();
+  });
 
   it('atomically retargets every live occurrence while preserving task fields and completed history', () => {
     const db = freshDb();

@@ -15,7 +15,7 @@ vi.mock('../../config.js', async () => {
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
-  isContainerRunningOrStarting: vi.fn().mockReturnValue(false),
+  isContainerStarting: vi.fn().mockReturnValue(false),
   getActiveContainerCount: vi.fn().mockReturnValue(0),
   killContainer: vi.fn(),
 }));
@@ -32,7 +32,7 @@ import {
 } from '../../db/index.js';
 import { createSession, findSessionByAgentGroup, getSessionsByAgentGroup, taskThreadId } from '../../db/sessions.js';
 import { countDueMessages } from '../../db/session-db.js';
-import { isContainerRunningOrStarting } from '../../container-runner.js';
+import { isContainerStarting } from '../../container-runner.js';
 import { inboundDbPath, initSessionFolder, outboundDbPath, writeSessionMessage } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { formatTasksTable } from '../format-tasks.js';
@@ -159,7 +159,7 @@ describe('tasks CLI resource', () => {
   });
 
   afterEach(() => {
-    vi.mocked(isContainerRunningOrStarting).mockReset().mockReturnValue(false);
+    vi.mocked(isContainerStarting).mockReset().mockReturnValue(false);
     closeDb();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   });
@@ -755,15 +755,28 @@ describe('tasks CLI resource', () => {
       db.close();
       return row;
     };
-    const before = snapshot();
+    let before = snapshot();
 
-    vi.mocked(isContainerRunningOrStarting).mockReturnValue(true);
+    vi.mocked(isContainerStarting).mockReturnValue(true);
     const busy = await dispatch({ id: 'move-busy', command: 'tasks-retarget', args: { id: series_id } }, newCtx);
     expect(busy.ok).toBe(false);
-    if (!busy.ok) expect(busy.error.message).toContain('running or starting');
+    if (!busy.ok) expect(busy.error.message).toContain('no changes were made');
     expect(snapshot()).toEqual(before);
 
-    vi.mocked(isContainerRunningOrStarting).mockReturnValue(false);
+    vi.mocked(isContainerStarting).mockReturnValue(false);
+    const dueDb = new Database(dbPath);
+    dueDb.prepare("UPDATE messages_in SET process_after = '2000-01-01T00:00:00Z' WHERE id = ?").run(series_id);
+    dueDb.close();
+    before = snapshot();
+    const due = await dispatch({ id: 'move-due', command: 'tasks-retarget', args: { id: series_id } }, newCtx);
+    expect(due.ok).toBe(false);
+    if (!due.ok) expect(due.error.message).toContain('no changes were made');
+    expect(snapshot()).toEqual(before);
+
+    const futureDb = new Database(dbPath);
+    futureDb.prepare("UPDATE messages_in SET process_after = '2999-01-01T00:00:00Z' WHERE id = ?").run(series_id);
+    futureDb.close();
+    before = snapshot();
     const outDb = new Database(outboundDbPath('ag-1', session_id));
     outDb
       .prepare('INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, ?, ?)')

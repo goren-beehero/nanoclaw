@@ -19,6 +19,7 @@ import {
   pauseTask,
   resumeTask,
   getLiveTaskRowIds,
+  hasDueLiveTaskRow,
   retargetTaskSeries,
   updateTask,
   type TaskUpdate,
@@ -38,7 +39,7 @@ import {
   getMessagingGroupAgents,
   getWiredMessagingGroupsByPlatform,
 } from '../../db/messaging-groups.js';
-import { isContainerRunningOrStarting } from '../../container-runner.js';
+import { isContainerStarting } from '../../container-runner.js';
 import { inboundDbPath, outboundDbPath, withInboundDb } from '../../session-manager.js';
 import { registerResource } from '../crud.js';
 import { appendRunLog } from '../../modules/scheduling/run-log.js';
@@ -482,17 +483,23 @@ function retargetTaskCommand(args: Record<string, unknown>, ctx: CallerContext) 
   }
 
   const id = taskId(args);
-  const candidates: Array<{ session: ScopedSession; rowIds: string[] }> = [];
+  const candidates: Array<{ session: ScopedSession; rowIds: string[]; due: boolean }> = [];
   for (const session of selectedSessions({ group: ctx.agentGroupId }, ctx)) {
-    const rowIds = withInbound(session, (db) => getLiveTaskRowIds(db, id)) ?? [];
-    if (rowIds.length > 0) candidates.push({ session, rowIds });
+    const taskState = withInbound(session, (db) => ({
+      rowIds: getLiveTaskRowIds(db, id),
+      due: hasDueLiveTaskRow(db, id),
+    }));
+    if (taskState && taskState.rowIds.length > 0) candidates.push({ session, ...taskState });
   }
   if (candidates.length === 0) throw new Error(`no live task matched: ${id}`);
   if (candidates.length !== 1) throw new Error(`task state is ambiguous: ${id}`);
 
   const candidate = candidates[0];
-  if (isContainerRunningOrStarting(candidate.session.id)) {
-    throw new Error('task is currently running or starting; retry after it finishes');
+  // Task-session containers intentionally stay alive and poll while idle.
+  // That is safe to retarget: only an in-flight spawn, a due row that may be
+  // claimed at any instant, or an existing processing acknowledgement blocks.
+  if (isContainerStarting(candidate.session.id) || candidate.due) {
+    throw new Error('task is currently starting or due to run; no changes were made');
   }
 
   const outPath = outboundDbPath(ctx.agentGroupId, candidate.session.id);
@@ -503,7 +510,7 @@ function retargetTaskCommand(args: Record<string, unknown>, ctx: CallerContext) 
       const claimed = outDb
         .prepare(`SELECT message_id, status FROM processing_ack WHERE message_id IN (${placeholders}) LIMIT 1`)
         .get(...candidate.rowIds) as { message_id: string; status: string } | undefined;
-      if (claimed) throw new Error('task has work already claimed or awaiting acknowledgement; retry later');
+      if (claimed) throw new Error('task has work already claimed or awaiting acknowledgement; no changes were made');
     } finally {
       outDb.close();
     }

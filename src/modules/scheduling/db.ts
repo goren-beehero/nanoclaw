@@ -150,6 +150,23 @@ export function getLiveTaskRowIds(db: Database.Database, taskId: string): string
   ).map((row) => row.id);
 }
 
+/** A pending task that is already due may be claimed by its polling worker at any instant. */
+export function hasDueLiveTaskRow(db: Database.Database, taskId: string): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1
+           FROM messages_in
+          WHERE kind = 'task'
+            AND (id = ? OR series_id = ?)
+            AND status = 'pending'
+            AND (process_after IS NULL OR datetime(process_after) <= datetime('now'))
+          LIMIT 1`,
+      )
+      .get(taskId, taskId),
+  );
+}
+
 /**
  * Move every unclaimed live occurrence in one series to a caller-derived
  * route. Only the four routing values change. The compare-and-update loop is
