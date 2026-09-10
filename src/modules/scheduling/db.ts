@@ -262,9 +262,23 @@ export function retargetTaskSeries(
         AND platform_id IS @oldPlatformId
         AND channel_type IS @oldChannelType
         AND thread_id IS @oldThreadId
-        AND content = @oldContent`,
+        AND content = @oldContent
+        AND (
+          status = 'paused'
+          OR (
+            status = 'pending'
+            AND process_after IS NOT NULL
+            AND datetime(process_after) > datetime('now')
+          )
+        )`,
   );
   const tx = db.transaction(() => {
+    // Recheck inside the write transaction. The CLI performs the same check
+    // for a clearer early error, but a warm poller can race that outer read as
+    // the task crosses its due time.
+    if (hasDueLiveTaskRow(db, taskId)) {
+      throw new Error('task is currently due to run; no changes were made');
+    }
     for (const entry of prepared) {
       const changed = update.run({
         id: entry.row.id,

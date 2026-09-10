@@ -391,6 +391,18 @@ describe('retargetTaskSeries', () => {
     db.close();
   });
 
+  it('rejects a due row inside the retarget transaction with zero writes', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'series-due', 'series-due', 'paused', '0 9 * * *');
+    insertRoutedTask(db, 'run-due', 'series-due', 'pending', null);
+    db.prepare("UPDATE messages_in SET process_after = '2000-01-01T00:00:00Z' WHERE id = 'run-due'").run();
+    const before = db.prepare('SELECT * FROM messages_in ORDER BY seq').all();
+
+    expect(() => retargetTaskSeries(db, 'series-due', destination)).toThrow('no changes were made');
+    expect(db.prepare('SELECT * FROM messages_in ORDER BY seq').all()).toEqual(before);
+    db.close();
+  });
+
   it('returns null for unknown or completed-only task ids', () => {
     const db = freshDb();
     insertRoutedTask(db, 'done-1', 'done-1', 'pending', null);
