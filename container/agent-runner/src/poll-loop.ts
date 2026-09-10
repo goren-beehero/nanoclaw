@@ -480,12 +480,11 @@ export async function processQuery(
         if (done) return;
 
         const keptIds = keep.map((m) => m.id);
-        const latestTriggerId = latestTriggerMessageId(keep);
         // A new task occurrence can be pushed into a still-open task query.
-        // Advance both stamps together so send_message routes and replies to
-        // that occurrence, rather than retaining the prior run's thread.
-        setCurrentInReplyTo(latestTriggerId);
-        setCurrentActionSource(latestTriggerId);
+        // Advance its reply stamp so send_message does not retain the prior
+        // run's thread. Authorization remains chat-trigger-only.
+        setCurrentInReplyTo(extractRouting(keep).inReplyTo);
+        setCurrentActionSource(latestTriggerMessageId(keep));
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
