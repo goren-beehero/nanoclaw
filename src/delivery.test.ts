@@ -372,19 +372,16 @@ describe('deliverSessionMessages — instance resolution', () => {
 });
 
 describe('deliverSessionMessages — permission check', () => {
-  it('passes the exact fresh action-source stamp to a host-side CLI action', async () => {
+  it("passes a system request's bound action source to its host-side CLI action", async () => {
     seedAgentAndChannel();
     const { session } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
     const outDb = new Database(outboundDbPath('ag-1', session.id));
     outDb
-      .prepare('INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES (?, ?, ?)')
-      .run('current_action_source', 'slack-trigger-1', now());
-    outDb
       .prepare(
-        `INSERT INTO messages_out (id, timestamp, kind, content)
-         VALUES (?, ?, 'system', ?)`,
+        `INSERT INTO messages_out (id, in_reply_to, timestamp, kind, content)
+         VALUES (?, ?, ?, 'system', ?)`,
       )
-      .run('system-action-source', now(), JSON.stringify({ action: 'test_exact_action_source' }));
+      .run('system-action-source', 'slack-trigger-1', now(), JSON.stringify({ action: 'test_exact_action_source' }));
     outDb.close();
 
     let captured: string | undefined;

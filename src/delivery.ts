@@ -44,18 +44,6 @@ const MAX_DELIVERY_ATTEMPTS = 3;
 /** Track delivery attempt counts. Resets on process restart (gives failed messages a fresh chance). */
 const deliveryAttempts = new Map<string, number>();
 
-const ACTION_SOURCE_MAX_AGE_MS = 30 * 60 * 1000;
-
-function getCurrentActionSource(outDb: Database.Database): string | undefined {
-  const row = outDb.prepare("SELECT value, updated_at FROM session_state WHERE key = 'current_action_source'").get() as
-    | { value: string; updated_at: string }
-    | undefined;
-  if (!row) return undefined;
-  const age = Date.now() - new Date(row.updated_at).getTime();
-  if (!Number.isFinite(age) || age > ACTION_SOURCE_MAX_AGE_MS) return undefined;
-  return row.value;
-}
-
 function requiresOriginChannel(agentGroupId: string): boolean {
   return (process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS ?? '')
     .split(',')
@@ -306,7 +294,7 @@ async function drainSession(session: Session): Promise<void> {
 
     for (const msg of undelivered) {
       try {
-        const platformMsgId = await deliverMessage(msg, session, inDb, outDb);
+        const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
         deliveryAttempts.delete(msg.id);
 
@@ -360,7 +348,6 @@ async function deliverMessage(
   },
   session: Session,
   inDb: Database.Database,
-  outDb: Database.Database,
 ): Promise<string | undefined> {
   if (!deliveryAdapter) {
     log.warn('No delivery adapter configured, dropping message', { id: msg.id });
@@ -372,7 +359,7 @@ async function deliverMessage(
   // System actions — handle internally (cli_request, etc.)
   if (msg.kind === 'system') {
     await handleSystemAction(content, session, inDb, {
-      actionSourceMessageId: getCurrentActionSource(outDb),
+      actionSourceMessageId: msg.in_reply_to ?? undefined,
     });
     return;
   }
