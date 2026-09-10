@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './db/connection.js';
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
+import { getCurrentInReplyTo, setCurrentInReplyTo } from './db/session-state.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError, processQuery } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
@@ -544,5 +545,30 @@ describe('task-run turn wiring (real processQuery)', () => {
     expect(logs[1]).toContain('[undelivered → local-cli] fire two result');
     expect(logs).not.toContain('first delivery decision handled');
     expect(logs).not.toContain('second delivery decision handled');
+  }, 10_000);
+
+  it('advances the reply source when a second task run enters an open query', async () => {
+    const pushes: string[] = [];
+    setCurrentInReplyTo('t1');
+
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      yield { type: 'init', continuation: 's1' };
+      insertMessage('t2', 'task', { prompt: 'fire two' });
+      const deadline = Date.now() + 5000;
+      while (!pushes.some((p) => p.includes('fire two')) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(getCurrentInReplyTo()).toBe('t2');
+      yield { type: 'result', text: 'second run handled' };
+    }
+
+    const query: AgentQuery = {
+      push: (message: string) => pushes.push(message),
+      end: () => {},
+      events: events(),
+      abort: () => {},
+    };
+
+    await processQuery(query, TASK_ROUTING, ['t1'], 'claude', undefined, 'prompt', undefined);
   }, 10_000);
 });

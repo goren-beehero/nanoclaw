@@ -480,7 +480,12 @@ export async function processQuery(
         if (done) return;
 
         const keptIds = keep.map((m) => m.id);
-        setCurrentActionSource(latestTriggerMessageId(keep));
+        const latestTriggerId = latestTriggerMessageId(keep);
+        // A new task occurrence can be pushed into a still-open task query.
+        // Advance both stamps together so send_message routes and replies to
+        // that occurrence, rather than retaining the prior run's thread.
+        setCurrentInReplyTo(latestTriggerId);
+        setCurrentActionSource(latestTriggerId);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
