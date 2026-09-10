@@ -61,6 +61,25 @@ export function getMessagingGroupByPlatform(
     .get(channelType, platformId) as MessagingGroup | undefined;
 }
 
+/** Exact wired groups for one agent and platform address, across instances. */
+export function getWiredMessagingGroupsByPlatform(
+  agentGroupId: string,
+  channelType: string,
+  platformId: string,
+): MessagingGroup[] {
+  return getDb()
+    .prepare(
+      `SELECT mg.*
+         FROM messaging_groups mg
+         JOIN messaging_group_agents mga ON mga.messaging_group_id = mg.id
+        WHERE mga.agent_group_id = ?
+          AND mg.channel_type = ?
+          AND mg.platform_id = ?
+        ORDER BY mg.instance, mg.id`,
+    )
+    .all(agentGroupId, channelType, platformId) as MessagingGroup[];
+}
+
 /**
  * Combined lookup for the router's fast-drop path. Returns the messaging
  * group (if it exists) and a count of wired agents in one query — lets

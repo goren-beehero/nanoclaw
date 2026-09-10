@@ -268,6 +268,7 @@ describe('retargetTaskSeries', () => {
     channelType: 'slack',
     threadId: '2000.0002',
     originSessionId: 'chat-new',
+    originMessagingGroupId: 'mg-new',
   };
 
   function insertRoutedTask(
@@ -342,6 +343,7 @@ describe('retargetTaskSeries', () => {
         script: 'echo keep',
         extra: { keep: true },
         originSessionId: 'chat-new',
+        originMessagingGroupId: 'mg-new',
       });
     }
     db.close();

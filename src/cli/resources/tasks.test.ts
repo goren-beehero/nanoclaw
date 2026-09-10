@@ -87,8 +87,13 @@ function createRoutedChatSession(group: string, id: string): void {
   initSessionFolder(group, id);
 }
 
-function agentCtx(group = 'ag-1', session = 'chat-1', messagingGroupId = 'mg-1'): CallerContext {
-  return { caller: 'agent', agentGroupId: group, sessionId: session, messagingGroupId };
+function agentCtx(
+  group = 'ag-1',
+  session = 'chat-1',
+  messagingGroupId = 'mg-1',
+  actionSourceMessageId = `request-${session}`,
+): CallerContext {
+  return { caller: 'agent', agentGroupId: group, sessionId: session, messagingGroupId, actionSourceMessageId };
 }
 
 function createRetargetThreads(): void {
@@ -541,7 +546,11 @@ describe('tasks CLI resource', () => {
       expect(after[field]).toEqual(before[field]);
     }
     expect(after).toMatchObject({ channel_type: 'slack', platform_id: 'C-retarget', thread_id: '2000.0002' });
-    expect(JSON.parse(after.content as string)).toMatchObject({ prompt: 'post marker', originSessionId: 'chat-new' });
+    expect(JSON.parse(after.content as string)).toMatchObject({
+      prompt: 'post marker',
+      originSessionId: 'chat-new',
+      originMessagingGroupId: 'mg-retarget',
+    });
     taskDb.close();
 
     const fired = await dispatch({ id: 'run-after-move', command: 'tasks-run', args: { id: series_id } }, newCtx);
@@ -573,6 +582,10 @@ describe('tasks CLI resource', () => {
     const beforeCount = (db.prepare('SELECT COUNT(*) AS c FROM messages_in').get() as { c: number }).c;
     db.close();
 
+    const first = await dispatch({ id: 'first-same-move', command: 'tasks-retarget', args: { id: series_id } }, ctx);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.data).toMatchObject({ touched: 1, unchanged: false });
     const moved = await dispatch({ id: 'same-move', command: 'tasks-retarget', args: { id: series_id } }, ctx);
     expect(moved.ok).toBe(true);
     if (!moved.ok) return;
@@ -621,8 +634,107 @@ describe('tasks CLI resource', () => {
         platform_id: 'C-retarget',
         thread_id: '3000.0003',
         origin_session_id: 'shared-chat',
+        origin_messaging_group_id: 'mg-retarget',
       },
     });
+  });
+
+  it('uses the exact action source instead of a newer row from another thread', async () => {
+    createRetargetThreads();
+    const created = await dispatch(
+      {
+        id: 'create-exact-source',
+        command: 'tasks-create',
+        args: { name: 'exact-source', prompt: 'x', recurrence: '0 9 * * *' },
+      },
+      agentCtx('ag-1', 'chat-old', 'mg-retarget'),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    writeSessionMessage('ag-1', 'chat-new', {
+      id: 'newer-other-thread',
+      kind: 'chat',
+      timestamp: new Date(Date.now() + 1000).toISOString(),
+      channelType: 'slack',
+      platformId: 'C-retarget',
+      threadId: '9999.9999',
+      content: JSON.stringify({ text: 'unrelated later message' }),
+    });
+    const moved = await dispatch(
+      {
+        id: 'move-exact-source',
+        command: 'tasks-retarget',
+        args: { id: (created.data as { series_id: string }).series_id },
+      },
+      agentCtx('ag-1', 'chat-new', 'mg-retarget', 'request-chat-new'),
+    );
+
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.data).toMatchObject({ to: { thread_id: '2000.0002' } });
+  });
+
+  it('rejects an ambiguous Slack app instance with zero writes', async () => {
+    createRetargetThreads();
+    createMessagingGroup({
+      id: 'mg-retarget-sibling',
+      channel_type: 'slack',
+      platform_id: 'C-retarget',
+      instance: 'slack-sibling',
+      name: 'same-channel-sibling-app',
+      is_group: 1,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-retarget-sibling',
+      messaging_group_id: 'mg-retarget-sibling',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const created = await dispatch(
+      {
+        id: 'create-instance-ambiguity',
+        command: 'tasks-create',
+        args: { name: 'instance-ambiguity', prompt: 'x', recurrence: '0 9 * * *' },
+      },
+      agentCtx('ag-1', 'chat-old', 'mg-retarget'),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { series_id, session_id } = created.data as { series_id: string; session_id: string };
+    const taskPath = inboundDbPath('ag-1', session_id);
+    const db = new Database(taskPath, { readonly: true });
+    const before = db.prepare('SELECT * FROM messages_in WHERE id = ?').get(series_id);
+    db.close();
+
+    createChatSession('ag-1', 'shared-ambiguous');
+    writeSessionMessage('ag-1', 'shared-ambiguous', {
+      id: 'request-shared-ambiguous',
+      kind: 'chat',
+      timestamp: now(),
+      channelType: 'slack',
+      platformId: 'C-retarget',
+      threadId: '4000.0004',
+      content: JSON.stringify({ text: 'move it here' }),
+    });
+    const moved = await dispatch(
+      { id: 'move-instance-ambiguity', command: 'tasks-retarget', args: { id: series_id } },
+      agentCtx('ag-1', 'shared-ambiguous', '', 'request-shared-ambiguous'),
+    );
+    expect(moved.ok).toBe(false);
+    if (!moved.ok) expect(moved.error.message).toContain('app instance is ambiguous');
+
+    const afterDb = new Database(taskPath, { readonly: true });
+    expect(afterDb.prepare('SELECT * FROM messages_in WHERE id = ?').get(series_id)).toEqual(before);
+    afterDb.close();
   });
 
   it('refuses running/starting or acknowledged work with zero writes', async () => {

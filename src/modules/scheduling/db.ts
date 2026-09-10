@@ -100,6 +100,7 @@ export interface TaskRetargetRoute {
   channelType: string;
   threadId: string;
   originSessionId: string;
+  originMessagingGroupId: string;
 }
 
 export interface TaskRetargetResult {
@@ -115,6 +116,7 @@ export interface TaskRetargetResult {
     channelType: string | null;
     threadId: string | null;
     originSessionId: string | null;
+    originMessagingGroupId: string | null;
   };
   to: TaskRetargetRoute;
 }
@@ -186,16 +188,26 @@ export function retargetTaskSeries(
       throw new Error(`task has unsupported content: ${taskId}`);
     }
     const originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
+    const originMessagingGroupId =
+      typeof content.originMessagingGroupId === 'string' ? content.originMessagingGroupId : null;
     const unchanged =
       row.platform_id === to.platformId &&
       row.channel_type === to.channelType &&
       row.thread_id === to.threadId &&
-      originSessionId === to.originSessionId;
+      originSessionId === to.originSessionId &&
+      originMessagingGroupId === to.originMessagingGroupId;
     return {
       row,
       originSessionId,
+      originMessagingGroupId,
       unchanged,
-      content: unchanged ? row.content : JSON.stringify({ ...content, originSessionId: to.originSessionId }),
+      content: unchanged
+        ? row.content
+        : JSON.stringify({
+            ...content,
+            originSessionId: to.originSessionId,
+            originMessagingGroupId: to.originMessagingGroupId,
+          }),
     };
   });
 
@@ -213,6 +225,7 @@ export function retargetTaskSeries(
       channelType: rows[0].channel_type,
       threadId: rows[0].thread_id,
       originSessionId: prepared[0].originSessionId,
+      originMessagingGroupId: prepared[0].originMessagingGroupId,
     },
     to,
   };

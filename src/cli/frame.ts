@@ -47,4 +47,6 @@ export type CallerContext =
       sessionId: string;
       agentGroupId: string;
       messagingGroupId: string;
+      /** Exact inbound message that authorized the current host-side action. */
+      actionSourceMessageId?: string;
     };

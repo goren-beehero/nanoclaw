@@ -5,19 +5,16 @@
  * the delivery poll picks it up and calls this handler. We dispatch
  * the command and write the response back to inbound.db.
  */
-import type Database from 'better-sqlite3';
-
 import { registerDeliveryAction } from '../delivery.js';
 import { unguarded } from '../guard/index.js';
 import { insertMessage } from '../db/session-db.js';
 import { log } from '../log.js';
 import { dispatch } from './dispatch.js';
 import type { RequestFrame } from './frame.js';
-import type { Session } from '../types.js';
 
 registerDeliveryAction(
   'cli_request',
-  async (content, session, inDb) => {
+  async (content, session, inDb, actionContext) => {
     const requestId = content.requestId as string;
     const command = content.command as string;
     const args = (content.args as Record<string, unknown>) ?? {};
@@ -33,6 +30,7 @@ registerDeliveryAction(
       sessionId: session.id,
       agentGroupId: session.agent_group_id,
       messagingGroupId: session.messaging_group_id ?? '',
+      actionSourceMessageId: actionContext?.actionSourceMessageId,
     };
 
     log.info('CLI request from agent', { requestId, command, sessionId: session.id });
