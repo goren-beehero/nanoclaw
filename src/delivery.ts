@@ -20,7 +20,7 @@ import {
 import { appendRunLog } from './modules/scheduling/run-log.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroup, getMessagingGroupByPlatform } from './db/messaging-groups.js';
+import { getMessagingGroup, getMessagingGroupAgents, getMessagingGroupByPlatform } from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -78,35 +78,68 @@ function getCapturedTaskOriginMessagingGroup(
         content: string;
       }
     | undefined;
-  if (
-    !source ||
-    source.kind !== 'task' ||
-    source.platform_id !== msg.platform_id ||
-    source.channel_type !== msg.channel_type ||
-    source.thread_id !== msg.thread_id
-  ) {
-    return undefined;
-  }
+  if (!source || source.kind !== 'task') return undefined;
 
   let originSessionId: string | null = null;
+  let capturedMessagingGroupId: string | null = null;
   try {
-    const content = JSON.parse(source.content) as { originSessionId?: unknown };
+    const content = JSON.parse(source.content) as {
+      originSessionId?: unknown;
+      originMessagingGroupId?: unknown;
+    };
     originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
+    capturedMessagingGroupId =
+      typeof content.originMessagingGroupId === 'string' ? content.originMessagingGroupId : null;
   } catch {
     return undefined;
   }
+
+  const sourceMatchesOutbound =
+    !!source.platform_id &&
+    !!source.channel_type &&
+    source.platform_id === msg.platform_id &&
+    source.channel_type === msg.channel_type &&
+    source.thread_id === msg.thread_id;
+
+  // New task occurrences capture the exact adapter instance that accepted the
+  // request. Once present, that identity is authoritative: never fall back to
+  // a sibling instance that happens to own the same chat address.
+  if (capturedMessagingGroupId) {
+    if (!sourceMatchesOutbound) {
+      throw new Error(`captured task route does not match outbound message ${msg.in_reply_to}`);
+    }
+    const captured = getMessagingGroup(capturedMessagingGroupId);
+    if (
+      !captured ||
+      captured.channel_type !== source.channel_type ||
+      captured.platform_id !== source.platform_id ||
+      !getMessagingGroupAgents(captured.id).some((wiring) => wiring.agent_group_id === session.agent_group_id)
+    ) {
+      throw new Error(`captured task messaging group is unavailable for ${msg.in_reply_to}`);
+    }
+    return captured;
+  }
+
+  // Legacy task rows predate exact instance capture. Preserve their existing
+  // origin-session lookup, but only when the stored route is internally
+  // consistent with the outbound message.
+  if (!source.platform_id || !source.channel_type || !sourceMatchesOutbound) return undefined;
   if (!originSessionId) return undefined;
 
   const originSession = getSession(originSessionId);
-  if (!originSession || originSession.agent_group_id !== session.agent_group_id || !originSession.messaging_group_id) {
+  if (!originSession || originSession.agent_group_id !== session.agent_group_id) {
     return undefined;
   }
-  const originMg = getMessagingGroup(originSession.messaging_group_id);
+  const originMg = originSession.messaging_group_id
+    ? getMessagingGroup(originSession.messaging_group_id)
+    : getMessagingGroupByPlatform(source.channel_type, source.platform_id);
   if (
     !originMg ||
     originMg.channel_type !== source.channel_type ||
     originMg.platform_id !== source.platform_id ||
-    originSession.thread_id !== source.thread_id
+    (originSession.messaging_group_id
+      ? originSession.thread_id !== source.thread_id
+      : !getMessagingGroupAgents(originMg.id).some((wiring) => wiring.agent_group_id === session.agent_group_id))
   ) {
     return undefined;
   }
@@ -335,7 +368,9 @@ async function deliverMessage(
 
   // System actions — handle internally (cli_request, etc.)
   if (msg.kind === 'system') {
-    await handleSystemAction(content, session, inDb);
+    await handleSystemAction(content, session, inDb, {
+      actionSourceMessageId: msg.in_reply_to ?? undefined,
+    });
     return;
   }
 
@@ -516,6 +551,7 @@ export type DeliveryActionHandler = (
   content: Record<string, unknown>,
   session: Session,
   inDb: Database.Database,
+  actionContext?: { actionSourceMessageId?: string },
 ) => Promise<void>;
 
 type DeliveryEntry =
@@ -593,13 +629,14 @@ async function handleSystemAction(
   content: Record<string, unknown>,
   session: Session,
   inDb: Database.Database,
+  actionContext: { actionSourceMessageId?: string },
 ): Promise<void> {
   const action = content.action as string;
   log.info('System action from agent', { sessionId: session.id, action });
 
   const registered = getDeliveryAction(action);
   if (registered) {
-    await registered(content, session, inDb);
+    await registered(content, session, inDb, actionContext);
     return;
   }
 

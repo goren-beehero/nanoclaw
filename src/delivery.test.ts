@@ -36,8 +36,9 @@ import {
 } from './db/index.js';
 import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, resolveTaskSession, outboundDbPath, openInboundDb } from './session-manager.js';
-import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
+import { deliverSessionMessages, registerDeliveryAction, setDeliveryAdapter } from './delivery.js';
 import { createChannelDeliveryAdapter } from './channels/channel-registry.js';
+import { unguarded } from './guard/index.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -76,6 +77,7 @@ function insertTaskOccurrence(
   taskId: string,
   originSessionId: string | null,
   route: { channelType: string | null; platformId: string | null; threadId: string | null },
+  originMessagingGroupId?: string,
 ): void {
   const db = openInboundDb('ag-1', sessionId);
   db.prepare(
@@ -87,7 +89,7 @@ function insertTaskOccurrence(
     route.platformId,
     route.channelType,
     route.threadId,
-    JSON.stringify({ prompt: 'scheduled check', originSessionId }),
+    JSON.stringify({ prompt: 'scheduled check', originSessionId, originMessagingGroupId }),
   );
   db.close();
 }
@@ -370,6 +372,32 @@ describe('deliverSessionMessages — instance resolution', () => {
 });
 
 describe('deliverSessionMessages — permission check', () => {
+  it("passes a system request's bound action source to its host-side CLI action", async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
+    const outDb = new Database(outboundDbPath('ag-1', session.id));
+    outDb
+      .prepare(
+        `INSERT INTO messages_out (id, in_reply_to, timestamp, kind, content)
+         VALUES (?, ?, ?, 'system', ?)`,
+      )
+      .run('system-action-source', 'slack-trigger-1', now(), JSON.stringify({ action: 'test_exact_action_source' }));
+    outDb.close();
+
+    let captured: string | undefined;
+    registerDeliveryAction(
+      'test_exact_action_source',
+      async (_content, _session, _inDb, actionContext) => {
+        captured = actionContext?.actionSourceMessageId;
+      },
+      unguarded('test-only action'),
+    );
+
+    await deliverSessionMessages(session);
+
+    expect(captured).toBe('slack-trigger-1');
+  });
+
   it('allows a channel-local task only to its captured Slack thread', async () => {
     seedAgentAndChannel();
     const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');
@@ -390,6 +418,134 @@ describe('deliverSessionMessages — permission check', () => {
     await deliverSessionMessages(task);
 
     expect(calls).toEqual([{ platformId: 'telegram:123', threadId: 'thread-origin' }]);
+  });
+
+  it('allows a channel-local task retargeted from an agent-shared session to its active wired thread', async () => {
+    seedAgentAndChannel();
+    createMessagingGroupAgent({
+      id: 'mga-shared-origin',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session: origin } = resolveSession('ag-1', null, null, 'agent-shared');
+    const { session: task } = resolveTaskSession('ag-1', 'shared-daily-check');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-current' };
+    insertTaskOccurrence(task.id, 'task-source-shared', origin.id, route);
+    insertTaskOutbound(task.id, 'out-task-shared', 'task-source-shared', route);
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    const calls: Array<{ platformId: string; threadId: string | null }> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, platformId, threadId) {
+        calls.push({ platformId, threadId });
+        return 'plat-task-shared';
+      },
+    });
+
+    await deliverSessionMessages(task);
+
+    expect(calls).toEqual([{ platformId: 'telegram:123', threadId: 'thread-current' }]);
+  });
+
+  it('delivers a retargeted task through its captured Slack app instance', async () => {
+    seedAgentAndChannel();
+    createMessagingGroup({
+      id: 'mg-captured-instance',
+      channel_type: 'telegram',
+      platform_id: 'telegram:123',
+      instance: 'telegram-captured',
+      name: 'Captured sibling instance',
+      is_group: 0,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-captured-instance',
+      messaging_group_id: 'mg-captured-instance',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session: origin } = resolveSession('ag-1', null, null, 'agent-shared');
+    const { session: task } = resolveTaskSession('ag-1', 'captured-instance-check');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-captured' };
+    insertTaskOccurrence(task.id, 'task-source-captured', origin.id, route, 'mg-captured-instance');
+    insertTaskOutbound(task.id, 'out-task-captured', 'task-source-captured', route);
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    const instances: Array<string | undefined> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, _content, _files, instance) {
+        instances.push(instance);
+        return 'plat-task-captured';
+      },
+    });
+
+    await deliverSessionMessages(task);
+
+    expect(instances).toEqual(['telegram-captured']);
+  });
+
+  it('fails closed when a captured task app instance is no longer wired', async () => {
+    seedAgentAndChannel();
+    createMessagingGroup({
+      id: 'mg-unwired-captured',
+      channel_type: 'telegram',
+      platform_id: 'telegram:123',
+      instance: 'telegram-unwired',
+      name: 'Unwired captured sibling',
+      is_group: 0,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-default-fallback',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+
+    const { session: origin } = resolveSession('ag-1', null, null, 'agent-shared');
+    const { session: task } = resolveTaskSession('ag-1', 'unwired-captured-instance');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-current' };
+    insertTaskOccurrence(task.id, 'task-source-unwired', origin.id, route, 'mg-unwired-captured');
+    insertTaskOutbound(task.id, 'out-task-unwired', 'task-source-unwired', route);
+
+    const calls: Array<string | undefined> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, _content, _files, instance) {
+        calls.push(instance);
+        return 'must-not-deliver';
+      },
+    });
+
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+
+    expect(calls).toHaveLength(0);
+    const inDb = openInboundDb('ag-1', task.id);
+    const delivered = getDeliveredIds(inDb);
+    inDb.close();
+    expect(delivered.has('out-task-unwired')).toBe(true);
   });
 
   it('blocks a channel-local task when its outbound thread differs from the captured origin', async () => {

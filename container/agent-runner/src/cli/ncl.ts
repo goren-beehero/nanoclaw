@@ -33,6 +33,7 @@ type ResponseFrame =
 
 const INBOUND_DB = '/workspace/inbound.db';
 const OUTBOUND_DB = '/workspace/outbound.db';
+const ACTION_SOURCE_MAX_AGE_MS = 30 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // DB transport
@@ -62,13 +63,22 @@ function writeRequest(req: RequestFrame): void {
     const maxIn = (inDb.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
     const max = Math.max(maxOut, maxIn);
     const nextSeq = max % 2 === 0 ? max + 1 : max + 2;
+    const actionSource = db
+      .prepare("SELECT value, updated_at FROM session_state WHERE key = 'current_action_source'")
+      .get() as { value: string; updated_at: string } | undefined;
+    const actionSourceAge = actionSource ? Date.now() - new Date(actionSource.updated_at).getTime() : Number.NaN;
+    const actionSourceMessageId =
+      actionSource && Number.isFinite(actionSourceAge) && actionSourceAge <= ACTION_SOURCE_MAX_AGE_MS
+        ? actionSource.value
+        : null;
 
     db.prepare(
-      `INSERT INTO messages_out (id, seq, timestamp, kind, content)
-       VALUES ($id, $seq, $timestamp, 'system', $content)`,
+      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, kind, content)
+       VALUES ($id, $seq, $in_reply_to, $timestamp, 'system', $content)`,
     ).run({
       $id: req.id,
       $seq: nextSeq,
+      $in_reply_to: actionSourceMessageId,
       $timestamp: new Date().toISOString(),
       $content: JSON.stringify({
         action: 'cli_request',
@@ -177,7 +187,9 @@ function parseArgv(argv: string[]): {
 
 function printUsage(): void {
   process.stdout.write(
-    ['Usage: ncl <command> [--key value ...] [--json]', '', 'Run `ncl help` to list available commands.', ''].join('\n'),
+    ['Usage: ncl <command> [--key value ...] [--json]', '', 'Run `ncl help` to list available commands.', ''].join(
+      '\n',
+    ),
   );
 }
 
@@ -247,9 +259,7 @@ function formatHuman(resp: ResponseFrame): string {
   const header = keys.map((k, i) => k.padEnd(widths[i])).join('  ');
   const sep = widths.map((w) => '-'.repeat(w)).join('  ');
   const rows = data.map((r) =>
-    keys
-      .map((k, i) => String((r as Record<string, unknown>)[k] ?? '').padEnd(widths[i]))
-      .join('  '),
+    keys.map((k, i) => String((r as Record<string, unknown>)[k] ?? '').padEnd(widths[i])).join('  '),
   );
 
   return [header, sep, ...rows, ''].join('\n');

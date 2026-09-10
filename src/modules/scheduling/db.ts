@@ -95,6 +95,214 @@ export interface TaskUpdate {
   processAfter?: string;
 }
 
+export interface TaskRetargetRoute {
+  platformId: string;
+  channelType: string;
+  threadId: string;
+  originSessionId: string;
+  originMessagingGroupId: string;
+}
+
+export interface TaskRetargetResult {
+  seriesId: string;
+  rowIds: string[];
+  touched: number;
+  unchanged: boolean;
+  statuses: string[];
+  nextRun: string | null;
+  recurrence: string | null;
+  from: {
+    platformId: string | null;
+    channelType: string | null;
+    threadId: string | null;
+    originSessionId: string | null;
+    originMessagingGroupId: string | null;
+  };
+  to: TaskRetargetRoute;
+}
+
+type LiveTaskRetargetRow = {
+  id: string;
+  seq: number;
+  series_id: string | null;
+  status: string;
+  process_after: string | null;
+  recurrence: string | null;
+  platform_id: string | null;
+  channel_type: string | null;
+  thread_id: string | null;
+  content: string;
+};
+
+/** Live row IDs for one exact task series, used to reject already-claimed work. */
+export function getLiveTaskRowIds(db: Database.Database, taskId: string): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT id
+           FROM messages_in
+          WHERE kind = 'task'
+            AND (id = ? OR series_id = ?)
+            AND status IN ('pending', 'paused')
+          ORDER BY seq`,
+      )
+      .all(taskId, taskId) as Array<{ id: string }>
+  ).map((row) => row.id);
+}
+
+/** A pending task that is already due may be claimed by its polling worker at any instant. */
+export function hasDueLiveTaskRow(db: Database.Database, taskId: string): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1
+           FROM messages_in
+          WHERE kind = 'task'
+            AND (id = ? OR series_id = ?)
+            AND status = 'pending'
+            AND (process_after IS NULL OR datetime(process_after) <= datetime('now'))
+          LIMIT 1`,
+      )
+      .get(taskId, taskId),
+  );
+}
+
+/**
+ * Move every unclaimed live occurrence in one series to a caller-derived
+ * route. Only the four routing values change. The compare-and-update loop is
+ * one SQLite transaction, so any stale row or write failure rolls everything
+ * back. Completed history is never selected.
+ */
+export function retargetTaskSeries(
+  db: Database.Database,
+  taskId: string,
+  to: TaskRetargetRoute,
+): TaskRetargetResult | null {
+  const rows = db
+    .prepare(
+      `SELECT id, seq, series_id, status, process_after, recurrence,
+              platform_id, channel_type, thread_id, content
+         FROM messages_in
+        WHERE kind = 'task'
+          AND (id = ? OR series_id = ?)
+          AND status IN ('pending', 'paused')
+        ORDER BY seq`,
+    )
+    .all(taskId, taskId) as LiveTaskRetargetRow[];
+  if (rows.length === 0) return null;
+
+  const seriesIds = new Set(rows.map((row) => row.series_id ?? row.id));
+  if (seriesIds.size !== 1) throw new Error(`task state is ambiguous: ${taskId}`);
+
+  const prepared = rows.map((row) => {
+    let content: Record<string, unknown>;
+    try {
+      content = JSON.parse(row.content) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(`task has unsupported legacy content: ${taskId}`, { cause: error });
+    }
+    if (!content || Array.isArray(content) || typeof content !== 'object') {
+      throw new Error(`task has unsupported content: ${taskId}`);
+    }
+    const originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
+    const originMessagingGroupId =
+      typeof content.originMessagingGroupId === 'string' ? content.originMessagingGroupId : null;
+    const unchanged =
+      row.platform_id === to.platformId &&
+      row.channel_type === to.channelType &&
+      row.thread_id === to.threadId &&
+      originSessionId === to.originSessionId &&
+      originMessagingGroupId === to.originMessagingGroupId;
+    return {
+      row,
+      originSessionId,
+      originMessagingGroupId,
+      unchanged,
+      content: unchanged
+        ? row.content
+        : JSON.stringify({
+            ...content,
+            originSessionId: to.originSessionId,
+            originMessagingGroupId: to.originMessagingGroupId,
+          }),
+    };
+  });
+
+  const scheduleRow = rows.find((row) => row.recurrence !== null) ?? rows[0];
+  const result: TaskRetargetResult = {
+    seriesId: [...seriesIds][0],
+    rowIds: rows.map((row) => row.id),
+    touched: 0,
+    unchanged: prepared.every((entry) => entry.unchanged),
+    statuses: [...new Set(rows.map((row) => row.status))],
+    nextRun: scheduleRow.process_after,
+    recurrence: scheduleRow.recurrence,
+    from: {
+      platformId: rows[0].platform_id,
+      channelType: rows[0].channel_type,
+      threadId: rows[0].thread_id,
+      originSessionId: prepared[0].originSessionId,
+      originMessagingGroupId: prepared[0].originMessagingGroupId,
+    },
+    to,
+  };
+  if (result.unchanged) return result;
+
+  const update = db.prepare(
+    `UPDATE messages_in
+        SET platform_id = @platformId,
+            channel_type = @channelType,
+            thread_id = @threadId,
+            content = @newContent
+      WHERE id = @id
+        AND seq = @seq
+        AND status = @status
+        AND process_after IS @processAfter
+        AND recurrence IS @recurrence
+        AND platform_id IS @oldPlatformId
+        AND channel_type IS @oldChannelType
+        AND thread_id IS @oldThreadId
+        AND content = @oldContent
+        AND (
+          status = 'paused'
+          OR (
+            status = 'pending'
+            AND process_after IS NOT NULL
+            AND datetime(process_after) > datetime('now')
+          )
+        )`,
+  );
+  const tx = db.transaction(() => {
+    // Recheck inside the write transaction. The CLI performs the same check
+    // for a clearer early error, but a warm poller can race that outer read as
+    // the task crosses its due time.
+    if (hasDueLiveTaskRow(db, taskId)) {
+      throw new Error('task is currently due to run; no changes were made');
+    }
+    for (const entry of prepared) {
+      const changed = update.run({
+        id: entry.row.id,
+        seq: entry.row.seq,
+        status: entry.row.status,
+        processAfter: entry.row.process_after,
+        recurrence: entry.row.recurrence,
+        oldPlatformId: entry.row.platform_id,
+        oldChannelType: entry.row.channel_type,
+        oldThreadId: entry.row.thread_id,
+        oldContent: entry.row.content,
+        platformId: to.platformId,
+        channelType: to.channelType,
+        threadId: to.threadId,
+        newContent: entry.content,
+      }).changes;
+      if (changed !== 1) throw new Error('task changed while retargeting; retry later');
+    }
+  });
+  tx();
+  result.touched = rows.length;
+  return result;
+}
+
 // Merges content JSON in-place so callers can update prompt/script without
 // clobbering other fields. Matches by id OR series_id so the live next
 // occurrence of a recurring task is updated, not just the completed row the

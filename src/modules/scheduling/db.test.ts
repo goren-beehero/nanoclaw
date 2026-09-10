@@ -15,6 +15,9 @@ import {
   cancelTask,
   pauseTask,
   resumeTask,
+  getLiveTaskRowIds,
+  hasDueLiveTaskRow,
+  retargetTaskSeries,
   updateTask,
   getCompletedRecurring,
   type RecurringMessage,
@@ -257,6 +260,156 @@ describe('updateTask', () => {
 
     const touched = updateTask(db, 'task-1', { prompt: 'new' });
     expect(touched).toBe(0);
+  });
+});
+
+describe('retargetTaskSeries', () => {
+  const destination = {
+    platformId: 'C-new',
+    channelType: 'slack',
+    threadId: '2000.0002',
+    originSessionId: 'chat-new',
+    originMessagingGroupId: 'mg-new',
+  };
+
+  function insertRoutedTask(
+    db: ReturnType<typeof openInboundDb>,
+    id: string,
+    seriesId: string,
+    status: 'pending' | 'paused',
+    recurrence: string | null,
+  ) {
+    insertTaskRow(db, {
+      id,
+      seriesId,
+      processAfter: '2999-01-01T00:00:00Z',
+      recurrence,
+      status,
+      platformId: 'C-old',
+      channelType: 'slack',
+      threadId: '1000.0001',
+      content: JSON.stringify({
+        prompt: 'keep prompt',
+        script: 'echo keep',
+        extra: { keep: true },
+        originSessionId: 'chat-old',
+      }),
+    });
+  }
+
+  it('distinguishes a due pending row from an idle future or paused row', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'future-1', 'future-1', 'pending', null);
+    insertRoutedTask(db, 'paused-1', 'paused-1', 'paused', null);
+    insertRoutedTask(db, 'due-1', 'due-1', 'pending', null);
+    db.prepare("UPDATE messages_in SET process_after = '2000-01-01T00:00:00Z' WHERE id = 'due-1'").run();
+
+    expect(hasDueLiveTaskRow(db, 'future-1')).toBe(false);
+    expect(hasDueLiveTaskRow(db, 'paused-1')).toBe(false);
+    expect(hasDueLiveTaskRow(db, 'due-1')).toBe(true);
+    db.close();
+  });
+
+  it('atomically retargets every live occurrence while preserving task fields and completed history', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'series-1', 'series-1', 'paused', '0 9 * * *');
+    insertRoutedTask(db, 'run-now-1', 'series-1', 'pending', null);
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'series-1'").run();
+    insertRoutedTask(db, 'next-1', 'series-1', 'paused', '0 9 * * *');
+
+    const before = db.prepare('SELECT * FROM messages_in ORDER BY seq').all() as Array<Record<string, unknown>>;
+    const result = retargetTaskSeries(db, 'series-1', destination);
+    const after = db.prepare('SELECT * FROM messages_in ORDER BY seq').all() as Array<Record<string, unknown>>;
+
+    expect(result).toMatchObject({
+      seriesId: 'series-1',
+      rowIds: ['run-now-1', 'next-1'],
+      touched: 2,
+      unchanged: false,
+      statuses: ['pending', 'paused'],
+      nextRun: '2999-01-01T00:00:00Z',
+      recurrence: '0 9 * * *',
+      to: destination,
+    });
+    for (let i = 0; i < before.length; i++) {
+      const oldRow = before[i];
+      const newRow = after[i];
+      if (oldRow.status === 'completed') {
+        expect(newRow).toEqual(oldRow);
+        continue;
+      }
+      for (const field of [
+        'id',
+        'seq',
+        'timestamp',
+        'status',
+        'tries',
+        'process_after',
+        'recurrence',
+        'kind',
+        'series_id',
+      ]) {
+        expect(newRow[field]).toEqual(oldRow[field]);
+      }
+      expect(newRow).toMatchObject({ platform_id: 'C-new', channel_type: 'slack', thread_id: '2000.0002' });
+      expect(JSON.parse(newRow.content as string)).toEqual({
+        prompt: 'keep prompt',
+        script: 'echo keep',
+        extra: { keep: true },
+        originSessionId: 'chat-new',
+        originMessagingGroupId: 'mg-new',
+      });
+    }
+    db.close();
+  });
+
+  it('supports one-shot tasks and repeats as an idempotent no-op', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'once-1', 'once-1', 'pending', null);
+    expect(getLiveTaskRowIds(db, 'once-1')).toEqual(['once-1']);
+
+    const first = retargetTaskSeries(db, 'once-1', destination);
+    const snapshot = db.prepare('SELECT * FROM messages_in').get();
+    const second = retargetTaskSeries(db, 'once-1', destination);
+
+    expect(first).toMatchObject({ touched: 1, unchanged: false, recurrence: null });
+    expect(second).toMatchObject({ touched: 0, unchanged: true, recurrence: null });
+    expect(db.prepare('SELECT * FROM messages_in').get()).toEqual(snapshot);
+    db.close();
+  });
+
+  it('rolls back every row when any update fails', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'series-2', 'series-2', 'pending', '0 9 * * *');
+    insertRoutedTask(db, 'run-now-2', 'series-2', 'pending', null);
+    const before = db.prepare('SELECT * FROM messages_in ORDER BY seq').all();
+    db.exec(`CREATE TRIGGER reject_second_retarget BEFORE UPDATE ON messages_in
+      WHEN OLD.id = 'run-now-2' BEGIN SELECT RAISE(ABORT, 'forced failure'); END;`);
+
+    expect(() => retargetTaskSeries(db, 'series-2', destination)).toThrow('forced failure');
+    expect(db.prepare('SELECT * FROM messages_in ORDER BY seq').all()).toEqual(before);
+    db.close();
+  });
+
+  it('rejects a due row inside the retarget transaction with zero writes', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'series-due', 'series-due', 'paused', '0 9 * * *');
+    insertRoutedTask(db, 'run-due', 'series-due', 'pending', null);
+    db.prepare("UPDATE messages_in SET process_after = '2000-01-01T00:00:00Z' WHERE id = 'run-due'").run();
+    const before = db.prepare('SELECT * FROM messages_in ORDER BY seq').all();
+
+    expect(() => retargetTaskSeries(db, 'series-due', destination)).toThrow('no changes were made');
+    expect(db.prepare('SELECT * FROM messages_in ORDER BY seq').all()).toEqual(before);
+    db.close();
+  });
+
+  it('returns null for unknown or completed-only task ids', () => {
+    const db = freshDb();
+    insertRoutedTask(db, 'done-1', 'done-1', 'pending', null);
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'done-1'").run();
+    expect(retargetTaskSeries(db, 'missing', destination)).toBeNull();
+    expect(retargetTaskSeries(db, 'done-1', destination)).toBeNull();
+    db.close();
   });
 });
 
