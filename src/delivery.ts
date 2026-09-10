@@ -78,42 +78,52 @@ function getCapturedTaskOriginMessagingGroup(
         content: string;
       }
     | undefined;
-  if (
-    !source ||
-    source.kind !== 'task' ||
-    !source.platform_id ||
-    !source.channel_type ||
-    source.platform_id !== msg.platform_id ||
-    source.channel_type !== msg.channel_type ||
-    source.thread_id !== msg.thread_id
-  ) {
-    return undefined;
-  }
+  if (!source || source.kind !== 'task') return undefined;
 
   let originSessionId: string | null = null;
+  let capturedMessagingGroupId: string | null = null;
   try {
     const content = JSON.parse(source.content) as {
       originSessionId?: unknown;
       originMessagingGroupId?: unknown;
     };
     originSessionId = typeof content.originSessionId === 'string' ? content.originSessionId : null;
-    const capturedMessagingGroupId =
+    capturedMessagingGroupId =
       typeof content.originMessagingGroupId === 'string' ? content.originMessagingGroupId : null;
-    if (capturedMessagingGroupId) {
-      const captured = getMessagingGroup(capturedMessagingGroupId);
-      if (
-        captured &&
-        captured.channel_type === source.channel_type &&
-        captured.platform_id === source.platform_id &&
-        getMessagingGroupAgents(captured.id).some((wiring) => wiring.agent_group_id === session.agent_group_id)
-      ) {
-        return captured;
-      }
-      return undefined;
-    }
   } catch {
     return undefined;
   }
+
+  const sourceMatchesOutbound =
+    !!source.platform_id &&
+    !!source.channel_type &&
+    source.platform_id === msg.platform_id &&
+    source.channel_type === msg.channel_type &&
+    source.thread_id === msg.thread_id;
+
+  // New task occurrences capture the exact adapter instance that accepted the
+  // request. Once present, that identity is authoritative: never fall back to
+  // a sibling instance that happens to own the same chat address.
+  if (capturedMessagingGroupId) {
+    if (!sourceMatchesOutbound) {
+      throw new Error(`captured task route does not match outbound message ${msg.in_reply_to}`);
+    }
+    const captured = getMessagingGroup(capturedMessagingGroupId);
+    if (
+      !captured ||
+      captured.channel_type !== source.channel_type ||
+      captured.platform_id !== source.platform_id ||
+      !getMessagingGroupAgents(captured.id).some((wiring) => wiring.agent_group_id === session.agent_group_id)
+    ) {
+      throw new Error(`captured task messaging group is unavailable for ${msg.in_reply_to}`);
+    }
+    return captured;
+  }
+
+  // Legacy task rows predate exact instance capture. Preserve their existing
+  // origin-session lookup, but only when the stored route is internally
+  // consistent with the outbound message.
+  if (!source.platform_id || !source.channel_type || !sourceMatchesOutbound) return undefined;
   if (!originSessionId) return undefined;
 
   const originSession = getSession(originSessionId);

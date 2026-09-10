@@ -498,6 +498,56 @@ describe('deliverSessionMessages — permission check', () => {
     expect(instances).toEqual(['telegram-captured']);
   });
 
+  it('fails closed when a captured task app instance is no longer wired', async () => {
+    seedAgentAndChannel();
+    createMessagingGroup({
+      id: 'mg-unwired-captured',
+      channel_type: 'telegram',
+      platform_id: 'telegram:123',
+      instance: 'telegram-unwired',
+      name: 'Unwired captured sibling',
+      is_group: 0,
+      unknown_sender_policy: 'public',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-default-fallback',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+
+    const { session: origin } = resolveSession('ag-1', null, null, 'agent-shared');
+    const { session: task } = resolveTaskSession('ag-1', 'unwired-captured-instance');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-current' };
+    insertTaskOccurrence(task.id, 'task-source-unwired', origin.id, route, 'mg-unwired-captured');
+    insertTaskOutbound(task.id, 'out-task-unwired', 'task-source-unwired', route);
+
+    const calls: Array<string | undefined> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, _content, _files, instance) {
+        calls.push(instance);
+        return 'must-not-deliver';
+      },
+    });
+
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+    await deliverSessionMessages(task);
+
+    expect(calls).toHaveLength(0);
+    const inDb = openInboundDb('ag-1', task.id);
+    const delivered = getDeliveredIds(inDb);
+    inDb.close();
+    expect(delivered.has('out-task-unwired')).toBe(true);
+  });
+
   it('blocks a channel-local task when its outbound thread differs from the captured origin', async () => {
     seedAgentAndChannel();
     const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');

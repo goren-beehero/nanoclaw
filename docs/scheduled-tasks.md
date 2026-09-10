@@ -88,8 +88,8 @@ destination from the authenticated caller session; it does not accept channel,
 thread, or destination arguments. The task must belong to the same agent group
 and the current conversation must be a wired Slack thread.
 
-The operation updates only the live series rows' captured route and
-`originSessionId`. Task ID, prompt, script, schedule, status, retry count, and
+The operation updates only the live series rows' captured route and origin
+metadata. Task ID, prompt, script, schedule, status, retry count, and
 completed history stay unchanged. Both recurring and one-shot tasks are
 supported. Repeating the request in the same thread is an idempotent no-op.
 
