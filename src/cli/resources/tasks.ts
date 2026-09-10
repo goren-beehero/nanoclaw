@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 
 import { GROUPS_DIR } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
@@ -18,6 +18,8 @@ import {
   insertTaskRow,
   pauseTask,
   resumeTask,
+  getLiveTaskRowIds,
+  retargetTaskSeries,
   updateTask,
   type TaskUpdate,
 } from '../../modules/scheduling/db.js';
@@ -31,7 +33,9 @@ import {
   type ScheduledTaskRow,
   validateRecurrence,
 } from '../../modules/scheduling/create.js';
-import { inboundDbPath, withInboundDb } from '../../session-manager.js';
+import { getMessagingGroup, getMessagingGroupAgents } from '../../db/messaging-groups.js';
+import { isContainerRunningOrStarting } from '../../container-runner.js';
+import { inboundDbPath, outboundDbPath, withInboundDb } from '../../session-manager.js';
 import { registerResource } from '../crud.js';
 import { appendRunLog } from '../../modules/scheduling/run-log.js';
 import { formatTasksTable } from '../format-tasks.js';
@@ -410,6 +414,90 @@ function runTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
   throw new Error(`task not found: ${id}`);
 }
 
+/** Move one task series to the exact Slack thread making this request. */
+function retargetTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
+  if (ctx.caller !== 'agent') {
+    throw new Error('task retarget must be requested from the destination Slack thread');
+  }
+
+  const callerSession = getSession(ctx.sessionId);
+  if (
+    !callerSession ||
+    callerSession.agent_group_id !== ctx.agentGroupId ||
+    !callerSession.messaging_group_id ||
+    callerSession.messaging_group_id !== ctx.messagingGroupId ||
+    !callerSession.thread_id
+  ) {
+    throw new Error('task retarget requires the current interactive thread');
+  }
+  const messagingGroup = getMessagingGroup(callerSession.messaging_group_id);
+  if (!messagingGroup || messagingGroup.channel_type !== 'slack') {
+    throw new Error('task retarget requires the current Slack thread');
+  }
+  if (!getMessagingGroupAgents(messagingGroup.id).some((wiring) => wiring.agent_group_id === ctx.agentGroupId)) {
+    throw new Error('the current Slack conversation is not wired to this agent group');
+  }
+
+  const id = taskId(args);
+  const candidates: Array<{ session: ScopedSession; rowIds: string[] }> = [];
+  for (const session of selectedSessions({ group: ctx.agentGroupId }, ctx)) {
+    const rowIds = withInbound(session, (db) => getLiveTaskRowIds(db, id)) ?? [];
+    if (rowIds.length > 0) candidates.push({ session, rowIds });
+  }
+  if (candidates.length === 0) throw new Error(`no live task matched: ${id}`);
+  if (candidates.length !== 1) throw new Error(`task state is ambiguous: ${id}`);
+
+  const candidate = candidates[0];
+  if (isContainerRunningOrStarting(candidate.session.id)) {
+    throw new Error('task is currently running or starting; retry after it finishes');
+  }
+
+  const outPath = outboundDbPath(ctx.agentGroupId, candidate.session.id);
+  if (fs.existsSync(outPath)) {
+    const outDb = new Database(outPath, { readonly: true });
+    try {
+      const placeholders = candidate.rowIds.map(() => '?').join(', ');
+      const claimed = outDb
+        .prepare(`SELECT message_id, status FROM processing_ack WHERE message_id IN (${placeholders}) LIMIT 1`)
+        .get(...candidate.rowIds) as { message_id: string; status: string } | undefined;
+      if (claimed) throw new Error('task has work already claimed or awaiting acknowledgement; retry later');
+    } finally {
+      outDb.close();
+    }
+  }
+
+  const result = withInbound(candidate.session, (db) =>
+    retargetTaskSeries(db, id, {
+      platformId: messagingGroup.platform_id,
+      channelType: messagingGroup.channel_type,
+      threadId: callerSession.thread_id!,
+      originSessionId: callerSession.id,
+    }),
+  );
+  if (!result) throw new Error(`no live task matched: ${id}`);
+  return {
+    series_id: result.seriesId,
+    row_ids: result.rowIds,
+    touched: result.touched,
+    unchanged: result.unchanged,
+    status: result.statuses.length === 1 ? result.statuses[0] : result.statuses,
+    next_run: result.nextRun,
+    recurrence: result.recurrence,
+    from: {
+      channel_type: result.from.channelType,
+      platform_id: result.from.platformId,
+      thread_id: result.from.threadId,
+      origin_session_id: result.from.originSessionId,
+    },
+    to: {
+      channel_type: result.to.channelType,
+      platform_id: result.to.platformId,
+      thread_id: result.to.threadId,
+      origin_session_id: result.to.originSessionId,
+    },
+  };
+}
+
 registerResource({
   name: 'task',
   plural: 'tasks',
@@ -619,6 +707,14 @@ registerResource({
         { name: 'session', type: 'string', description: 'Limit to one task session id.' },
       ],
       handler: async (args, ctx) => runTaskCommand(args, ctx),
+    },
+    retarget: {
+      access: 'open',
+      description:
+        'Move an existing task series so future results go to the current Slack thread. The destination is derived from the caller; no route argument is accepted. The task schedule and workflow are unchanged.',
+      args: [{ name: 'id', type: 'string', description: 'Task series id.', required: true }],
+      examples: [`# From the destination Slack thread:\nncl tasks retarget <task-id>`],
+      handler: async (args, ctx) => retargetTaskCommand(args, ctx),
     },
     pause: {
       access: 'open',

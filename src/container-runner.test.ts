@@ -28,6 +28,15 @@ describe('resolveProviderName', () => {
   });
 });
 
+describe('container activity state (structural)', () => {
+  it('treats both a live container and an in-flight wake as busy', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toMatch(
+      /function isContainerRunningOrStarting\(sessionId: string\)[\s\S]*activeContainers\.has\(sessionId\)[\s\S]*wakePromises\.has\(sessionId\)/,
+    );
+  });
+});
+
 describe('buildContainerArgs ordering invariant (structural)', () => {
   // The OneCLI gateway apply (SDK applyContainerConfig) appends credential-stub
   // mounts — e.g. the codex auth.json sentinel nested INSIDE our RW

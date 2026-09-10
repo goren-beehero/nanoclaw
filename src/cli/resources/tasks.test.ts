@@ -15,16 +15,25 @@ vi.mock('../../config.js', async () => {
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
+  isContainerRunningOrStarting: vi.fn().mockReturnValue(false),
   getActiveContainerCount: vi.fn().mockReturnValue(0),
   killContainer: vi.fn(),
 }));
 
 const TEST_DIR = '/tmp/nanoclaw-test-cli-tasks';
 
-import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from '../../db/index.js';
+import {
+  initTestDb,
+  closeDb,
+  runMigrations,
+  createAgentGroup,
+  createMessagingGroup,
+  createMessagingGroupAgent,
+} from '../../db/index.js';
 import { createSession, findSessionByAgentGroup, getSessionsByAgentGroup, taskThreadId } from '../../db/sessions.js';
 import { countDueMessages } from '../../db/session-db.js';
-import { inboundDbPath, initSessionFolder } from '../../session-manager.js';
+import { isContainerRunningOrStarting } from '../../container-runner.js';
+import { inboundDbPath, initSessionFolder, outboundDbPath } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
 import { formatTasksTable } from '../format-tasks.js';
 import type { CallerContext } from '../frame.js';
@@ -78,8 +87,49 @@ function createRoutedChatSession(group: string, id: string): void {
   initSessionFolder(group, id);
 }
 
-function agentCtx(group = 'ag-1', session = 'chat-1'): CallerContext {
-  return { caller: 'agent', agentGroupId: group, sessionId: session, messagingGroupId: 'mg-1' };
+function agentCtx(group = 'ag-1', session = 'chat-1', messagingGroupId = 'mg-1'): CallerContext {
+  return { caller: 'agent', agentGroupId: group, sessionId: session, messagingGroupId };
+}
+
+function createRetargetThreads(): void {
+  createMessagingGroup({
+    id: 'mg-retarget',
+    channel_type: 'slack',
+    platform_id: 'C-retarget',
+    name: 'bobi-test-testing',
+    is_group: 1,
+    unknown_sender_policy: 'public',
+    created_at: now(),
+  });
+  createMessagingGroupAgent({
+    id: 'mga-retarget',
+    messaging_group_id: 'mg-retarget',
+    agent_group_id: 'ag-1',
+    engage_mode: 'mention-sticky',
+    engage_pattern: null,
+    sender_scope: 'all',
+    ignored_message_policy: 'accumulate',
+    session_mode: 'per-thread',
+    priority: 0,
+    created_at: now(),
+  });
+  for (const [id, threadId] of [
+    ['chat-old', '1000.0001'],
+    ['chat-new', '2000.0002'],
+  ]) {
+    createSession({
+      id,
+      agent_group_id: 'ag-1',
+      messaging_group_id: 'mg-retarget',
+      thread_id: threadId,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: now(),
+    });
+    initSessionFolder('ag-1', id);
+  }
 }
 
 describe('tasks CLI resource', () => {
@@ -95,6 +145,7 @@ describe('tasks CLI resource', () => {
   });
 
   afterEach(() => {
+    vi.mocked(isContainerRunningOrStarting).mockReset().mockReturnValue(false);
     closeDb();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   });
@@ -425,6 +476,168 @@ describe('tasks CLI resource', () => {
       platform_id: 'C012345',
       thread_id: '1234.5678',
     });
+  });
+
+  it('retargets an existing series to the exact current Slack thread and run-now inherits it', async () => {
+    createRetargetThreads();
+    const oldCtx = agentCtx('ag-1', 'chat-old', 'mg-retarget');
+    const newCtx = agentCtx('ag-1', 'chat-new', 'mg-retarget');
+    const created = await dispatch(
+      {
+        id: 'create-retarget',
+        command: 'tasks-create',
+        args: { name: 'marker', prompt: 'post marker', recurrence: '0 9 * * *' },
+      },
+      oldCtx,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { series_id, session_id, process_after } = created.data as {
+      series_id: string;
+      session_id: string;
+      process_after: string;
+    };
+
+    const beforeDb = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    const before = beforeDb.prepare('SELECT * FROM messages_in WHERE id = ?').get(series_id) as Record<string, unknown>;
+    beforeDb.close();
+
+    const moved = await dispatch({ id: 'move', command: 'tasks-retarget', args: { id: series_id } }, newCtx);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.data).toMatchObject({
+      series_id,
+      touched: 1,
+      unchanged: false,
+      status: 'pending',
+      next_run: process_after,
+      recurrence: '0 9 * * *',
+      from: { platform_id: 'C-retarget', thread_id: '1000.0001', origin_session_id: 'chat-old' },
+      to: { platform_id: 'C-retarget', thread_id: '2000.0002', origin_session_id: 'chat-new' },
+    });
+
+    const taskDb = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    const after = taskDb.prepare('SELECT * FROM messages_in WHERE id = ?').get(series_id) as Record<string, unknown>;
+    for (const field of [
+      'id',
+      'seq',
+      'timestamp',
+      'status',
+      'tries',
+      'process_after',
+      'recurrence',
+      'kind',
+      'series_id',
+    ]) {
+      expect(after[field]).toEqual(before[field]);
+    }
+    expect(after).toMatchObject({ channel_type: 'slack', platform_id: 'C-retarget', thread_id: '2000.0002' });
+    expect(JSON.parse(after.content as string)).toMatchObject({ prompt: 'post marker', originSessionId: 'chat-new' });
+    taskDb.close();
+
+    const fired = await dispatch({ id: 'run-after-move', command: 'tasks-run', args: { id: series_id } }, newCtx);
+    expect(fired.ok).toBe(true);
+    if (!fired.ok) return;
+    const runRowId = (fired.data as { row_id: string }).row_id;
+    const runDb = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    expect(
+      runDb.prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE id = ?').get(runRowId),
+    ).toEqual({ channel_type: 'slack', platform_id: 'C-retarget', thread_id: '2000.0002' });
+    runDb.close();
+  });
+
+  it('makes a repeated retarget request an idempotent no-op without adding rows', async () => {
+    createRetargetThreads();
+    const ctx = agentCtx('ag-1', 'chat-new', 'mg-retarget');
+    const created = await dispatch(
+      {
+        id: 'create-idempotent',
+        command: 'tasks-create',
+        args: { name: 'same', prompt: 'x', recurrence: '0 9 * * *' },
+      },
+      ctx,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { series_id, session_id } = created.data as { series_id: string; session_id: string };
+    const db = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    const beforeCount = (db.prepare('SELECT COUNT(*) AS c FROM messages_in').get() as { c: number }).c;
+    db.close();
+
+    const moved = await dispatch({ id: 'same-move', command: 'tasks-retarget', args: { id: series_id } }, ctx);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.data).toMatchObject({ touched: 0, unchanged: true });
+    const afterDb = new Database(inboundDbPath('ag-1', session_id), { readonly: true });
+    expect((afterDb.prepare('SELECT COUNT(*) AS c FROM messages_in').get() as { c: number }).c).toBe(beforeCount);
+    afterDb.close();
+  });
+
+  it('refuses running/starting or acknowledged work with zero writes', async () => {
+    createRetargetThreads();
+    const oldCtx = agentCtx('ag-1', 'chat-old', 'mg-retarget');
+    const newCtx = agentCtx('ag-1', 'chat-new', 'mg-retarget');
+    const created = await dispatch(
+      { id: 'create-busy', command: 'tasks-create', args: { name: 'busy', prompt: 'x', recurrence: '0 9 * * *' } },
+      oldCtx,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { series_id, session_id } = created.data as { series_id: string; session_id: string };
+    const dbPath = inboundDbPath('ag-1', session_id);
+    const snapshot = () => {
+      const db = new Database(dbPath, { readonly: true });
+      const row = db.prepare('SELECT * FROM messages_in WHERE id = ?').get(series_id);
+      db.close();
+      return row;
+    };
+    const before = snapshot();
+
+    vi.mocked(isContainerRunningOrStarting).mockReturnValue(true);
+    const busy = await dispatch({ id: 'move-busy', command: 'tasks-retarget', args: { id: series_id } }, newCtx);
+    expect(busy.ok).toBe(false);
+    if (!busy.ok) expect(busy.error.message).toContain('running or starting');
+    expect(snapshot()).toEqual(before);
+
+    vi.mocked(isContainerRunningOrStarting).mockReturnValue(false);
+    const outDb = new Database(outboundDbPath('ag-1', session_id));
+    outDb
+      .prepare('INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, ?, ?)')
+      .run(series_id, 'processing', now());
+    outDb.close();
+    const claimed = await dispatch({ id: 'move-claimed', command: 'tasks-retarget', args: { id: series_id } }, newCtx);
+    expect(claimed.ok).toBe(false);
+    if (!claimed.ok) expect(claimed.error.message).toContain('already claimed');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('rejects host, raw-route, and cross-group retarget attempts', async () => {
+    createRetargetThreads();
+    const oldCtx = agentCtx('ag-1', 'chat-old', 'mg-retarget');
+    const created = await dispatch(
+      { id: 'create-scope', command: 'tasks-create', args: { name: 'scope', prompt: 'x', recurrence: '0 9 * * *' } },
+      oldCtx,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const seriesId = (created.data as { series_id: string }).series_id;
+
+    const host = await dispatch(
+      { id: 'host-move', command: 'tasks-retarget', args: { id: seriesId } },
+      { caller: 'host' },
+    );
+    expect(host.ok).toBe(false);
+    const raw = await dispatch(
+      { id: 'raw-move', command: 'tasks-retarget', args: { id: seriesId, thread_id: '3000.0003' } },
+      agentCtx('ag-1', 'chat-new', 'mg-retarget'),
+    );
+    expect(raw.ok).toBe(false);
+    if (!raw.ok) expect(raw.error.message).toContain('unknown flag --thread-id');
+    const foreign = await dispatch(
+      { id: 'foreign-move', command: 'tasks-retarget', args: { id: seriesId } },
+      agentCtx('ag-2', 'chat-2', 'mg-1'),
+    );
+    expect(foreign.ok).toBe(false);
   });
 
   it('task object exposes origin_session_id and created_at', async () => {

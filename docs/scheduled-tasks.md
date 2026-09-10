@@ -75,6 +75,29 @@ ncl tasks run <task-id> --group <agent-group-id>
 `run` also works while a task is paused. It queues one extra run and does not
 resume the recurring schedule.
 
+## Move future deliveries to the current Slack thread
+
+From the destination Slack thread, the agent can run:
+
+```bash
+ncl tasks retarget <task-id>
+```
+
+`retarget` changes the existing task series in place. NanoClaw derives the
+destination from the authenticated caller session; it does not accept channel,
+thread, or destination arguments. The task must belong to the same agent group
+and the current conversation must be a wired Slack thread.
+
+The operation updates only the live series rows' captured route and
+`originSessionId`. Task ID, prompt, script, schedule, status, retry count, and
+completed history stay unchanged. Both recurring and one-shot tasks are
+supported. Repeating the request in the same thread is an idempotent no-op.
+
+NanoClaw refuses the move with zero writes while the task container is running
+or starting, or while a live occurrence has an acknowledgement record. Retry
+after that run finishes. A manual run is separate: use `ncl tasks run <task-id>`
+only when the user explicitly asks to run it now.
+
 ## Script gates
 
 A task can run a Bash script before waking the agent. This is useful for
