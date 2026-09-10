@@ -392,6 +392,40 @@ describe('deliverSessionMessages — permission check', () => {
     expect(calls).toEqual([{ platformId: 'telegram:123', threadId: 'thread-origin' }]);
   });
 
+  it('allows a channel-local task retargeted from an agent-shared session to its active wired thread', async () => {
+    seedAgentAndChannel();
+    createMessagingGroupAgent({
+      id: 'mga-shared-origin',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'mention-sticky',
+      engage_pattern: null,
+      sender_scope: 'all',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'agent-shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session: origin } = resolveSession('ag-1', null, null, 'agent-shared');
+    const { session: task } = resolveTaskSession('ag-1', 'shared-daily-check');
+    const route = { channelType: 'telegram', platformId: 'telegram:123', threadId: 'thread-current' };
+    insertTaskOccurrence(task.id, 'task-source-shared', origin.id, route);
+    insertTaskOutbound(task.id, 'out-task-shared', 'task-source-shared', route);
+
+    process.env.NANOCLAW_CHANNEL_LOCAL_AGENT_GROUPS = 'ag-1';
+    const calls: Array<{ platformId: string; threadId: string | null }> = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, platformId, threadId) {
+        calls.push({ platformId, threadId });
+        return 'plat-task-shared';
+      },
+    });
+
+    await deliverSessionMessages(task);
+
+    expect(calls).toEqual([{ platformId: 'telegram:123', threadId: 'thread-current' }]);
+  });
+
   it('blocks a channel-local task when its outbound thread differs from the captured origin', async () => {
     seedAgentAndChannel();
     const { session: origin } = resolveSession('ag-1', 'mg-1', 'thread-origin', 'per-thread');

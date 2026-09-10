@@ -20,7 +20,7 @@ import {
 import { appendRunLog } from './modules/scheduling/run-log.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroup, getMessagingGroupByPlatform } from './db/messaging-groups.js';
+import { getMessagingGroup, getMessagingGroupAgents, getMessagingGroupByPlatform } from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -81,6 +81,8 @@ function getCapturedTaskOriginMessagingGroup(
   if (
     !source ||
     source.kind !== 'task' ||
+    !source.platform_id ||
+    !source.channel_type ||
     source.platform_id !== msg.platform_id ||
     source.channel_type !== msg.channel_type ||
     source.thread_id !== msg.thread_id
@@ -98,15 +100,19 @@ function getCapturedTaskOriginMessagingGroup(
   if (!originSessionId) return undefined;
 
   const originSession = getSession(originSessionId);
-  if (!originSession || originSession.agent_group_id !== session.agent_group_id || !originSession.messaging_group_id) {
+  if (!originSession || originSession.agent_group_id !== session.agent_group_id) {
     return undefined;
   }
-  const originMg = getMessagingGroup(originSession.messaging_group_id);
+  const originMg = originSession.messaging_group_id
+    ? getMessagingGroup(originSession.messaging_group_id)
+    : getMessagingGroupByPlatform(source.channel_type, source.platform_id);
   if (
     !originMg ||
     originMg.channel_type !== source.channel_type ||
     originMg.platform_id !== source.platform_id ||
-    originSession.thread_id !== source.thread_id
+    (originSession.messaging_group_id
+      ? originSession.thread_id !== source.thread_id
+      : !getMessagingGroupAgents(originMg.id).some((wiring) => wiring.agent_group_id === session.agent_group_id))
   ) {
     return undefined;
   }
